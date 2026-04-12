@@ -1,0 +1,64 @@
+{
+  "strategy_name": "okx_15m_mtf",
+  "latest_timestamp": "2026-04-12T12:00:00",
+  "latest_close": 2190.97,
+  "latest_signal_action": "hold",
+  "latest_signal_reason": "mtf_entry_not_ready",
+  "current_position_state": "flat",
+  "current_position_qty": 0.0,
+  "cash": 10113.902203,
+  "equity": 10113.902203,
+  "recommendation": "stand_aside",
+  "recent_trades": [
+    {
+      "side": "sell",
+      "timestamp": "2026-03-26T00:00:00",
+      "price": 2152.273325,
+      "quantity": 4.658308988121681,
+      "fee_paid": 10.025954174742038,
+      "cash_after": 10015.928220567295,
+      "position_after": 0.0,
+      "reason": "session_exit"
+    },
+    {
+      "side": "buy",
+      "timestamp": "2026-03-30T20:00:00",
+      "price": 2027.7433649999998,
+      "quantity": 4.934511176797281,
+      "fee_paid": 10.005922298269029,
+      "cash_after": -1.8189894035458565e-12,
+      "position_after": 4.934511176797281,
+      "reason": "mtf_trend_trigger_entry"
+    },
+    {
+      "side": "sell",
+      "timestamp": "2026-03-31T00:00:00",
+      "price": 2065.856555,
+      "quantity": 4.934511176797281,
+      "fee_paid": 10.193992260307427,
+      "cash_after": 10183.798268047118,
+      "position_after": 0.0,
+      "reason": "session_exit"
+    },
+    {
+      "side": "buy",
+      "timestamp": "2026-04-04T16:00:00",
+      "price": 2065.69233,
+      "quantity": 4.9250435293060875,
+      "fee_paid": 10.173624643403715,
+      "cash_after": 0.0,
+      "position_after": 4.9250435293060875,
+      "reason": "mtf_trend_trigger_entry"
+    },
+    {
+      "side": "sell",
+      "timestamp": "2026-04-05T00:00:00",
+      "price": 2055.6216750000003,
+      "quantity": 4.9250435293060875,
+      "fee_paid": 10.124026229160092,
+      "cash_after": 10113.902202930933,
+      "position_after": 0.0,
+      "reason": "session_exit"
+    }
+  ]
+}

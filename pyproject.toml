@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eth-strategy-system"
+version = "0.1.0"
+description = "ETH strategy research and backtesting MVP"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Hermes Agent" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9"]
+
+[project.scripts]
+eth-backtest = "eth_backtester.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

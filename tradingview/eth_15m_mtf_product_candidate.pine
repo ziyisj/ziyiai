@@ -1,0 +1,50 @@
+// @version=5
+strategy("ETH 15m MTF Product Candidate", overlay=true, initial_capital=10000, pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.1)
+
+trendFast = input.int(4, "1H Trend Fast SMA", minval=1)
+trendSlow = input.int(10, "1H Trend Slow SMA", minval=2)
+triggerFast = input.int(8, "15m Trigger Fast EMA", minval=1)
+triggerSlow = input.int(21, "15m Trigger Slow EMA", minval=2)
+triggerSignal = input.int(7, "15m Trigger Signal EMA", minval=1)
+entryRsiWindow = input.int(7, "15m Entry RSI Window", minval=2)
+entryRsiThreshold = input.float(50.0, "15m Entry RSI Threshold")
+exitRsi = input.float(65.0, "15m Exit RSI")
+atrWindow = input.int(10, "15m ATR Window", minval=1)
+minAtrPct = input.float(0.002, "Min ATR %", step=0.0001)
+maxAtrPct = input.float(0.02, "Max ATR %", step=0.0001)
+sessionInput = input.session("0600-2200", "Trading Session")
+
+inSession = not na(time(timeframe.period, sessionInput))
+atrPct = ta.atr(atrWindow) / close
+macdLine = ta.ema(close, triggerFast) - ta.ema(close, triggerSlow)
+macdSignal = ta.ema(macdLine, triggerSignal)
+rsiValue = ta.rsi(close, entryRsiWindow)
+
+higherClose = request.security(syminfo.tickerid, "60", close, barmerge.gaps_off, barmerge.lookahead_off)
+trendFastValue = request.security(syminfo.tickerid, "60", ta.sma(close, trendFast), barmerge.gaps_off, barmerge.lookahead_off)
+trendSlowValue = request.security(syminfo.tickerid, "60", ta.sma(close, trendSlow), barmerge.gaps_off, barmerge.lookahead_off)
+trendUp = trendFastValue > trendSlowValue
+volatilityOk = atrPct >= minAtrPct and atrPct <= maxAtrPct
+crossedUp = ta.crossover(macdLine, macdSignal)
+crossedDown = ta.crossunder(macdLine, macdSignal)
+rsiRecovered = rsiValue > entryRsiThreshold and nz(rsiValue[1]) <= entryRsiThreshold
+momentumReentry = rsiValue > nz(rsiValue[1]) and rsiValue <= exitRsi
+
+enterLong = inSession and strategy.position_size == 0 and trendUp and volatilityOk and ((crossedUp and rsiValue <= exitRsi) or (rsiRecovered and macdLine > macdSignal) or (momentumReentry and macdLine > macdSignal))
+exitLong = strategy.position_size > 0 and (not inSession or crossedDown or rsiValue >= exitRsi or not trendUp or not volatilityOk)
+
+if enterLong
+    strategy.entry("Long", strategy.long)
+
+if exitLong
+    strategy.close("Long")
+
+plot(trendFastValue, title="1H Trend Fast SMA", color=color.new(color.green, 0), linewidth=2)
+plot(trendSlowValue, title="1H Trend Slow SMA", color=color.new(color.red, 0), linewidth=2)
+plotshape(enterLong, title="Enter Long", style=shape.triangleup, location=location.belowbar, size=size.small, color=color.lime, text="BUY")
+plotshape(exitLong, title="Exit Long", style=shape.triangledown, location=location.abovebar, size=size.small, color=color.red, text="SELL")
+
+bgcolor(trendUp ? color.new(color.green, 92) : color.new(color.red, 94), title="Trend Filter")
+
+alertcondition(enterLong, title="ETH 15m MTF Enter Long", message="ETH 15m MTF strategy: enter long")
+alertcondition(exitLong, title="ETH 15m MTF Exit Long", message="ETH 15m MTF strategy: exit long")

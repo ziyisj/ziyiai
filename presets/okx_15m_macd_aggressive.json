@@ -1,0 +1,13 @@
+{
+  "strategy": "macd",
+  "csv": "data/eth_okx_15m.csv",
+  "slippage_bps": 0,
+  "position_size_pct": 1.0,
+  "stop_loss_pct": null,
+  "take_profit_pct": null,
+  "max_hold_candles": 18,
+  "macd_fast_window": 8,
+  "macd_slow_window": 26,
+  "macd_signal_window": 7,
+  "notes": "Aggressive 15m ETH day-trading preset: better in-sample return, weaker walk-forward stability than the multi-timeframe preset."
+}
