@@ -29,12 +29,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-desktop.txt
 
-      - name: Build Windows EXE
+      - name: Build Windows EXEs
         run: |
           python -m PyInstaller --noconfirm --clean windows-desktop/ETH_15M_Signal_Desktop.spec
+          python -m PyInstaller --noconfirm --clean windows-desktop/ETH_15M_Web_Dashboard.spec
 
-      - name: Upload EXE artifact
+      - name: Upload desktop EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: ETH_15M_Signal_Desktop
           path: dist/ETH_15M_Signal_Desktop.exe
+
+      - name: Upload web dashboard EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ETH_15M_Web_Dashboard
+          path: dist/ETH_15M_Web_Dashboard.exe
