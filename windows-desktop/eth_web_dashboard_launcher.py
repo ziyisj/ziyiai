@@ -33,7 +33,6 @@ WINDOW_TITLE = "ETH 15M 独立桌面看盘终端"
 
 def ensure_runtime_assets() -> None:
     required_paths = [
-        ROOT / "src",
         ROOT / "web-dashboard" / "index.html",
         ROOT / "presets" / "okx_15m_mtf_production_candidate.json",
     ]

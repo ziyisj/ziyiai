@@ -629,3 +629,19 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_launcher_runtime_assets_do_not_require_src_directory(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "bundle"
+    (runtime_root / "web-dashboard").mkdir(parents=True)
+    (runtime_root / "presets").mkdir(parents=True)
+    (runtime_root / "web-dashboard" / "index.html").write_text("<html></html>", encoding="utf-8")
+    (runtime_root / "presets" / "okx_15m_mtf_production_candidate.json").write_text("{}", encoding="utf-8")
+
+    required_paths = [
+        runtime_root / "web-dashboard" / "index.html",
+        runtime_root / "presets" / "okx_15m_mtf_production_candidate.json",
+    ]
+    missing = [str(path) for path in required_paths if not path.exists()]
+    assert missing == []
+    assert not (runtime_root / "src").exists()
