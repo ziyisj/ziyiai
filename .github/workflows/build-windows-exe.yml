@@ -1,0 +1,39 @@
+name: build-windows-exe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows-desktop/**'
+      - 'src/eth_backtester/**'
+      - 'presets/**'
+      - 'tradingview/**'
+      - 'requirements-desktop.txt'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install desktop build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-desktop.txt
+
+      - name: Build Windows EXE
+        run: |
+          python -m PyInstaller --noconfirm --clean windows-desktop/ETH_15M_Signal_Desktop.spec
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ETH_15M_Signal_Desktop
+          path: dist/ETH_15M_Signal_Desktop.exe
