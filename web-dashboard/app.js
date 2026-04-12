@@ -1,8 +1,11 @@
 const state = {
   refreshSeconds: 1,
-  timers: new Set(),
   chartReady: false,
   selectedBar: '15m',
+  eventSource: null,
+  timerId: null,
+  hasRenderedData: false,
+  lastRenderedBar: null,
 };
 
 const dom = {
@@ -14,6 +17,8 @@ const dom = {
   metaRefresh: document.getElementById('meta-refresh'),
   refreshBtn: document.getElementById('refresh-btn'),
   priceValue: document.getElementById('price-value'),
+  priceSubvalue: document.getElementById('price-subvalue'),
+  wsStatus: document.getElementById('ws-status'),
   signalValue: document.getElementById('signal-value'),
   recommendValue: document.getElementById('recommend-value'),
   suggestedSide: document.getElementById('suggested-side'),
@@ -52,7 +57,7 @@ const chartTheme = {
 };
 
 function formatTimeLabel(iso) {
-  return iso.replace('T', ' ');
+  return iso ? iso.replace('T', ' ') : '-';
 }
 
 function toUnixSeconds(iso) {
@@ -68,8 +73,20 @@ function mapRecommendation(value) {
   return ({ enter_long: '建议开多', exit_long: '建议平仓', hold_long: '继续持有', stand_aside: '继续观望' })[value] || value;
 }
 
-function mapPosition(state, qty) {
-  return `${({ flat: '空仓', long: '持多' })[state] || state} (${Number(qty).toFixed(6)})`;
+function mapPosition(positionState, qty) {
+  return `${({ flat: '空仓', long: '持多' })[positionState] || positionState} (${Number(qty).toFixed(6)})`;
+}
+
+function mapWsStatus(realtime) {
+  if (!realtime) return '-';
+  const statusMap = {
+    connected: '已连接',
+    connecting: '连接中',
+    disconnected: '未连接',
+    error: '异常',
+  };
+  const label = statusMap[realtime.status] || realtime.status || '未知';
+  return realtime.last_error ? `${label} / ${realtime.last_error}` : label;
 }
 
 function setBadge(snapshot) {
@@ -153,6 +170,8 @@ function makeLineData(candles, values) {
 }
 
 function updateCharts(payload) {
+  if (!payload.candles || payload.candles.length === 0) return;
+
   const candles = payload.candles.map(c => ({
     time: toUnixSeconds(c.time),
     open: c.open,
@@ -185,21 +204,29 @@ function updateCharts(payload) {
     color: value >= 0 ? '#22c55e' : '#ef4444',
   })).filter(Boolean));
 
-  state.priceChartObj.timeScale().fitContent();
-  state.rsiChartObj.timeScale().fitContent();
-  state.macdChartObj.timeScale().fitContent();
+  if (!state.hasRenderedData || state.lastRenderedBar !== state.selectedBar) {
+    state.priceChartObj.timeScale().fitContent();
+    state.rsiChartObj.timeScale().fitContent();
+    state.macdChartObj.timeScale().fitContent();
+  }
+  state.hasRenderedData = true;
+  state.lastRenderedBar = state.selectedBar;
 
   dom.chartRange.textContent = `${formatTimeLabel(payload.candles[0].time)} -> ${formatTimeLabel(payload.candles[payload.candles.length - 1].time)}`;
 }
 
 function updateSummary(payload) {
   const s = payload.snapshot;
+  const realtime = payload.realtime || {};
+
   dom.metaStrategy.textContent = payload.meta.strategy;
   dom.metaInstrument.textContent = payload.meta.instrument;
   dom.barSelect.value = payload.meta.bar;
   state.selectedBar = payload.meta.bar;
-  dom.metaRefresh.textContent = `${payload.meta.refresh_seconds}秒`;
+  dom.metaRefresh.textContent = payload.meta.stream_url ? 'SSE实时推送' : `${payload.meta.refresh_seconds}秒`;
   dom.priceValue.textContent = `${Number(s.latest_close).toFixed(2)} USDT`;
+  dom.priceSubvalue.textContent = `K线收盘价：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间：${formatTimeLabel(realtime.latest_price_ts)}`;
+  dom.wsStatus.textContent = mapWsStatus(realtime);
   dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
   dom.recommendValue.textContent = mapRecommendation(s.recommendation);
   dom.suggestedSide.textContent = s.suggested_side;
@@ -216,7 +243,7 @@ function updateSummary(payload) {
   dom.analysisConfidence.textContent = `分析置信度：${(Number(s.market_confidence) * 100).toFixed(0)}% | 周期：${payload.meta.bar}`;
   dom.analysisDescription.textContent = s.strategy_description;
   dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | ${s.market_regime} | 建议方向：${s.suggested_side} | 开仓 ${Number(s.suggested_entry).toFixed(2)} / 止损 ${Number(s.suggested_stop_loss).toFixed(2)} / 止盈 ${Number(s.suggested_take_profit).toFixed(2)}`;
-  dom.lastUpdate.textContent = `上次刷新：${new Date().toLocaleString('zh-CN')}`;
+  dom.lastUpdate.textContent = `上次更新：${new Date().toLocaleString('zh-CN')} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
   setBadge(s);
 }
 
@@ -238,40 +265,110 @@ function updateTrades(trades) {
   }).join('');
 }
 
-async function fetchDashboard() {
-  const params = new URLSearchParams({ bar: state.selectedBar });
-  const res = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
-  const payload = await res.json();
-  if (!res.ok) throw new Error(payload.error || '获取数据失败');
-  state.refreshSeconds = payload.meta.refresh_seconds;
+function applyPayload(payload) {
+  state.refreshSeconds = payload.meta.refresh_seconds || 1;
   updateSummary(payload);
   updateTrades(payload.snapshot.recent_trades || []);
   dom.jsonOutput.textContent = JSON.stringify(payload.snapshot, null, 2);
   updateCharts(payload);
 }
 
-async function refreshLoop() {
+async function fetchDashboard() {
+  const params = new URLSearchParams({ bar: state.selectedBar });
+  const res = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
+  const payload = await res.json();
+  if (!res.ok) throw new Error(payload.error || '获取数据失败');
+  applyPayload(payload);
+}
+
+function stopPolling() {
+  window.clearTimeout(state.timerId);
+  state.timerId = null;
+}
+
+function schedulePolling() {
+  stopPolling();
+  state.timerId = window.setTimeout(async () => {
+    try {
+      await fetchDashboard();
+    } catch (err) {
+      dom.lastUpdate.textContent = `刷新失败：${err.message}`;
+      dom.quickHint.textContent = '数据拉取失败，请检查本地服务日志';
+    } finally {
+      schedulePolling();
+    }
+  }, Math.max(1, state.refreshSeconds) * 1000);
+}
+
+function closeStream() {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+}
+
+function connectStream() {
+  closeStream();
+  stopPolling();
+  if (!window.EventSource) {
+    schedulePolling();
+    return;
+  }
+  const params = new URLSearchParams({ bar: state.selectedBar });
+  const stream = new EventSource(`/api/dashboard-stream?${params.toString()}`);
+  state.eventSource = stream;
+
+  stream.addEventListener('dashboard', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      applyPayload(payload);
+    } catch (err) {
+      dom.lastUpdate.textContent = `实时消息解析失败：${err.message}`;
+    }
+  });
+
+  stream.onerror = () => {
+    dom.lastUpdate.textContent = `实时推送重连中：${new Date().toLocaleString('zh-CN')}`;
+    if (!state.eventSource) return;
+    closeStream();
+    schedulePolling();
+    window.setTimeout(() => {
+      if (!state.eventSource) connectStream();
+    }, 1500);
+  };
+}
+
+async function bootstrapRealtime() {
+  try {
+    await fetchDashboard();
+    connectStream();
+  } catch (err) {
+    dom.lastUpdate.textContent = `初始化失败：${err.message}`;
+    dom.quickHint.textContent = '数据拉取失败，请检查本地服务日志';
+    schedulePolling();
+  }
+}
+
+dom.refreshBtn.addEventListener('click', async () => {
+  stopPolling();
   try {
     await fetchDashboard();
   } catch (err) {
     dom.lastUpdate.textContent = `刷新失败：${err.message}`;
-    dom.quickHint.textContent = '数据拉取失败，请检查本地服务日志';
-  } finally {
-    window.clearTimeout(state.timerId);
-    state.timerId = window.setTimeout(refreshLoop, state.refreshSeconds * 1000);
   }
-}
-
-dom.refreshBtn.addEventListener('click', () => {
-  window.clearTimeout(state.timerId);
-  refreshLoop();
+  connectStream();
 });
 
 dom.barSelect.addEventListener('change', () => {
   state.selectedBar = dom.barSelect.value;
-  window.clearTimeout(state.timerId);
-  refreshLoop();
+  state.hasRenderedData = false;
+  bootstrapRealtime();
+});
+
+window.addEventListener('beforeunload', () => {
+  closeStream();
+  stopPolling();
 });
 
 setupCharts();
-refreshLoop();
+bootstrapRealtime();

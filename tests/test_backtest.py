@@ -663,8 +663,19 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
             }
 
     monkeypatch.setattr(
-        "eth_backtester.dashboard_server.build_okx_live_snapshot_bundle",
-        lambda args: (candles, DummySnapshot()),
+        "eth_backtester.dashboard_server.build_okx_live_dashboard_bundle",
+        lambda args: (
+            candles,
+            DummySnapshot(),
+            {
+                "latest_price": candles[-1].close + 0.5,
+                "latest_price_ts": candles[-1].timestamp.isoformat(),
+                "latest_candle_close": candles[-1].close,
+                "status": "connected",
+                "last_error": None,
+                "transport": "okx_ws_public",
+            },
+        ),
     )
 
     args = build_dashboard_args(["--no-browser", "--port", "0"])
@@ -676,8 +687,16 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
             payload = json.load(response)
         assert payload["meta"]["instrument"] == "ETH-USDT-SWAP"
         assert payload["meta"]["bar"] == "1H"
+        assert payload["meta"]["stream_url"] == "/api/dashboard-stream?bar=1H"
         assert len(payload["candles"]) == len(candles)
         assert payload["snapshot"]["latest_close"] == candles[-1].close
+        assert payload["realtime"]["status"] == "connected"
+        assert payload["realtime"]["latest_price"] == candles[-1].close + 0.5
+
+        with urlopen(f"{url}api/dashboard-stream?bar=1H", timeout=5) as response:
+            chunk = response.read(4096).decode("utf-8")
+        assert "event: dashboard" in chunk
+        assert '"snapshot": {' in chunk
     finally:
         server.shutdown()
         server.server_close()

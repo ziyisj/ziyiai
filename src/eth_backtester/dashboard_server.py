@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .cli import apply_preset_args, build_parser
 from .indicators import exponential_moving_average, relative_strength_index, simple_moving_average
-from .live import build_okx_live_snapshot_bundle
+from .live import build_okx_live_dashboard_bundle
 
 
 def get_runtime_root() -> Path:
@@ -79,16 +79,18 @@ class DashboardState:
     def fetch_payload(self, bar: str | None = None) -> dict:
         resolved_args = self._resolve_args(bar)
         with self.lock:
-            candles, snapshot = build_okx_live_snapshot_bundle(resolved_args)
+            candles, snapshot, realtime = build_okx_live_dashboard_bundle(resolved_args)
         return {
             "snapshot": snapshot.to_dict(),
             "candles": _serialize_candles(candles),
             "indicators": _build_indicator_payload(candles),
+            "realtime": realtime,
             "meta": {
                 "refresh_seconds": max(1, int(getattr(resolved_args, "dashboard_refresh_seconds", 1))),
                 "instrument": resolved_args.okx_inst_id,
                 "bar": resolved_args.okx_bar,
                 "strategy": resolved_args.strategy,
+                "stream_url": f"/api/dashboard-stream?bar={resolved_args.okx_bar}",
             },
         }
 
@@ -100,6 +102,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:
         return
+
+    def _serve_sse_stream(self, bar: str | None = None) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        previous_body = None
+        while True:
+            payload = self.state.fetch_payload(bar=bar)
+            body = json.dumps(payload, ensure_ascii=False)
+            if body != previous_body:
+                self.wfile.write(f"event: dashboard\ndata: {body}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                previous_body = body
+            time.sleep(0.5)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -115,6 +134,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            except Exception as exc:
+                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
+                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            return
+        if parsed.path == "/api/dashboard-stream":
+            try:
+                params = parse_qs(parsed.query)
+                bar = params.get("bar", [None])[0]
+                self._serve_sse_stream(bar=bar)
+            except (BrokenPipeError, ConnectionResetError):
+                return
             except Exception as exc:
                 body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
                 self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)

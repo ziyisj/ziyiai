@@ -82,6 +82,7 @@ body {
 }
 .metric { padding: 14px; min-height: 92px; }
 .metric strong { display: block; margin-top: 10px; font-size: 18px; line-height: 1.35; }
+.metric-subvalue { margin-top: 6px; line-height: 1.4; }
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.9fr) minmax(360px, 0.9fr);
