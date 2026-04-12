@@ -2,11 +2,15 @@
 
 from pathlib import Path
 
-project_root = Path.cwd()
+from PyInstaller.utils.hooks import collect_submodules
+
+spec_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd() / "windows-desktop"
+project_root = spec_dir.parent
 app_path = project_root / "windows-desktop" / "eth_web_dashboard_launcher.py"
 presets_dir = project_root / "presets"
 tradingview_dir = project_root / "tradingview"
 web_dashboard_dir = project_root / "web-dashboard"
+pywebview_hiddenimports = collect_submodules("webview")
 
 block_cipher = None
 
@@ -20,7 +24,7 @@ a = Analysis(
         (str(web_dashboard_dir), "web-dashboard"),
         (str(project_root / "README.md"), "."),
     ],
-    hiddenimports=[],
+    hiddenimports=pywebview_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

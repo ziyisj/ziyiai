@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="CoinGecko lookback window in days (1, 7, 14, 30, 90, 180, 365)",
     )
     parser.add_argument("--vs-currency", default="usd", help="Fiat quote currency for CoinGecko downloads")
-    parser.add_argument("--okx-inst-id", default="ETH-USDT", help="OKX instrument id, e.g. ETH-USDT")
+    parser.add_argument("--okx-inst-id", default="ETH-USDT-SWAP", help="OKX instrument id, e.g. ETH-USDT-SWAP")
     parser.add_argument("--okx-bar", default="4H", help="OKX candle timeframe, e.g. 1H, 4H, 1D")
     parser.add_argument("--okx-candles", type=int, default=300, help="How many OKX candles to download")
     parser.add_argument(

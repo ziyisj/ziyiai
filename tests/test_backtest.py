@@ -22,6 +22,7 @@ from eth_backtester.download import (
     fetch_eth_ohlcv_from_okx,
 )
 from eth_backtester.live import build_okx_live_signal_snapshot
+from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
 from eth_backtester.models import Candle, Signal
@@ -472,8 +473,8 @@ def test_signal_snapshot_reports_live_position_state(tmp_path: Path) -> None:
 def test_build_okx_live_signal_snapshot_uses_live_data(monkeypatch) -> None:
     candles = _make_15m_candles([100 + i for i in range(120)])
 
-    def fake_fetch_eth_ohlcv_from_okx(inst_id: str = "ETH-USDT", bar: str = "15m", candles_limit: int = 300, request_limit: int = 100):
-        assert inst_id == "ETH-USDT"
+    def fake_fetch_eth_ohlcv_from_okx(inst_id: str = "ETH-USDT-SWAP", bar: str = "15m", candles_limit: int = 300, request_limit: int = 100):
+        assert inst_id == "ETH-USDT-SWAP"
         assert bar == "15m"
         assert candles_limit == 120
         return candles
@@ -580,3 +581,51 @@ def test_walk_forward_requires_enough_candles(tmp_path: Path) -> None:
         raise AssertionError("expected ValueError for insufficient candles")
     except ValueError as exc:
         assert "not enough candles" in str(exc)
+
+
+def test_create_dashboard_server_uses_dynamic_port_without_opening_browser() -> None:
+    args = build_dashboard_args(["--no-browser", "--port", "0"])
+    server, url = create_dashboard_server(args)
+    try:
+        assert url.startswith("http://127.0.0.1:")
+        assert server.server_address[1] > 0
+    finally:
+        server.server_close()
+
+
+def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
+    candles = _make_15m_candles([100 + i for i in range(60)])
+
+    class DummySnapshot:
+        def to_dict(self):
+            return {
+                "latest_close": candles[-1].close,
+                "latest_signal_action": "hold",
+                "latest_signal_reason": "test",
+                "recommendation": "stand_aside",
+                "current_position_state": "flat",
+                "current_position_qty": 0.0,
+                "equity": 10000.0,
+                "cash": 10000.0,
+                "latest_timestamp": candles[-1].timestamp.isoformat(),
+                "recent_trades": [],
+            }
+
+    monkeypatch.setattr(
+        "eth_backtester.dashboard_server.build_okx_live_snapshot_bundle",
+        lambda args: (candles, DummySnapshot()),
+    )
+
+    args = build_dashboard_args(["--no-browser", "--port", "0"])
+    server, url, _thread = start_dashboard_server(args)
+    try:
+        from urllib.request import urlopen
+
+        with urlopen(f"{url}api/dashboard", timeout=5) as response:
+            payload = json.load(response)
+        assert payload["meta"]["instrument"] == "ETH-USDT-SWAP"
+        assert len(payload["candles"]) == len(candles)
+        assert payload["snapshot"]["latest_close"] == candles[-1].close
+    finally:
+        server.shutdown()
+        server.server_close()

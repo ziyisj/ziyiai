@@ -124,11 +124,12 @@ Windows desktop usage:
 3. Double-click `windows-desktop/ETH_15M_Signal_Desktop.bat` to run the app directly.
 4. To build a standalone `.exe` on Windows, run `windows-desktop/build_windows_exe.bat`.
 5. The built executable will appear at `dist/ETH_15M_Signal_Desktop.exe`.
-6. The desktop app will poll live OKX ETH-USDT 15m data and show the latest signal snapshot.
-7. For a TradingView-style web chart dashboard, double-click `windows-desktop/ETH_15M_Web_Dashboard.bat` or run `PYTHONPATH=src python3 -m eth_backtester.dashboard_server`.
-8. The web dashboard opens a local page with lightweight-charts, candlesticks, MA lines, RSI, MACD, and buy/sell markers.
+6. The desktop app will poll live OKX ETH-USDT-SWAP perpetual 15m data and show the latest signal snapshot.
+7. For a TradingView-style web chart dashboard in an independent desktop window, double-click `windows-desktop/ETH_15M_Web_Dashboard.bat`.
+8. The desktop window embeds the local lightweight-charts dashboard directly, instead of opening an external browser tab.
 9. To build a standalone web-dashboard `.exe` on Windows, run `windows-desktop/build_web_dashboard_exe.bat`.
 10. The built executable will appear at `dist/ETH_15M_Web_Dashboard.exe`.
+11. If the packaged app fails to start, check the log file at `%USERPROFILE%\ETH_15M_Web_Dashboard.log`.
 
 GitHub Actions Windows build:
 

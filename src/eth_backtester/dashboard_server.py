@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import threading
+import time
 import webbrowser
-from dataclasses import asdict
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -132,7 +133,7 @@ def build_dashboard_args(cli_args: list[str] | None = None) -> argparse.Namespac
         str(DEFAULT_PRESET),
         "--live-okx-snapshot",
         "--okx-inst-id",
-        "ETH-USDT",
+        "ETH-USDT-SWAP",
         "--okx-bar",
         "15m",
         "--okx-candles",
@@ -142,14 +143,48 @@ def build_dashboard_args(cli_args: list[str] | None = None) -> argparse.Namespac
     return apply_preset_args(args)
 
 
-def run_dashboard_server(args: argparse.Namespace) -> str:
+def create_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServer, str]:
     state = DashboardState(args)
 
     def handler(*handler_args, **handler_kwargs):
         DashboardHandler(*handler_args, state=state, **handler_kwargs)
 
     server = ReusableHTTPServer((args.host, args.port), handler)
-    url = f"http://{args.host}:{args.port}/"
+    actual_port = server.server_address[1]
+    url = f"http://{args.host}:{actual_port}/"
+    return server, url
+
+
+def wait_for_server(url: str, timeout: float = 10.0) -> None:
+    deadline = time.time() + timeout
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise TimeoutError(f"Dashboard server did not become ready within {timeout} seconds: {url}")
+
+
+def start_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServer, str, threading.Thread]:
+    server, url = create_dashboard_server(args)
+    thread = threading.Thread(target=server.serve_forever, name="eth-dashboard-server", daemon=True)
+    thread.start()
+    try:
+        wait_for_server(url)
+    except Exception:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        raise
+    return server, url, thread
+
+
+def run_dashboard_server(args: argparse.Namespace) -> str:
+    server, url = create_dashboard_server(args)
     if not args.no_browser:
         webbrowser.open(url)
     print(f"Dashboard running at {url}")
@@ -158,6 +193,7 @@ def run_dashboard_server(args: argparse.Namespace) -> str:
     except KeyboardInterrupt:
         pass
     finally:
+        server.shutdown()
         server.server_close()
     return url
 
