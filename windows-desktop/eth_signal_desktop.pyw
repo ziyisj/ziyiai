@@ -2,20 +2,30 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def get_runtime_root() -> Path:
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        return Path(bundled_root)
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = get_runtime_root()
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
+if SRC.exists() and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from eth_backtester.cli import apply_preset_args, build_parser
 from eth_backtester.live import build_okx_live_signal_snapshot
 
 DEFAULT_PRESET = ROOT / "presets" / "okx_15m_mtf_production_candidate.json"
+LOG_PATH = Path.home() / "ETH_15M_Signal_Desktop.log"
 
 
 class SignalDesktopApp:
@@ -99,9 +109,16 @@ class SignalDesktopApp:
             self.status_var.set("OK")
             self.last_update_var.set(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         except Exception as exc:
+            details = traceback.format_exc()
+            LOG_PATH.write_text(details, encoding="utf-8")
             self.status_var.set(f"ERROR: {exc}")
             self.last_update_var.set(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            self._set_text(f"刷新失败:\n{exc}")
+            self._set_text(
+                "刷新失败:\n"
+                f"{exc}\n\n"
+                f"日志文件: {LOG_PATH}\n\n"
+                "请把这段报错截图给我，我可以继续修。"
+            )
 
         self._schedule_refresh()
 
