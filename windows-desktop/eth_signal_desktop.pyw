@@ -95,7 +95,7 @@ class SignalDesktopApp:
         self.show_markers_var = tk.BooleanVar(value=True)
         self.show_crosshair_var = tk.BooleanVar(value=True)
         self.preset_path_var = tk.StringVar(value=str(DEFAULT_PRESET))
-        self.refresh_seconds_var = tk.StringVar(value="15")
+        self.refresh_seconds_var = tk.StringVar(value="5")
         self.status_var = tk.StringVar(value="系统已就绪")
         self.last_update_var = tk.StringVar(value="尚未刷新")
         self.chart_footer_var = tk.StringVar(value="等待行情数据...")
@@ -181,7 +181,7 @@ class SignalDesktopApp:
         left = ttk.Frame(top, style="App.TFrame")
         left.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(left, text="ETH 15分钟量化信号终端", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(left, text="OKX 实时行情 / K线主图 / RSI / MACD / 买卖点 / 信号面板", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Label(left, text="OKX 实时行情 / K线主图 / RSI / MACD / 买卖点 / 信号面板（默认5秒轮询实时刷新）", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
 
         right = ttk.Frame(top, style="App.TFrame")
         right.pack(side=tk.RIGHT, anchor="e")
@@ -213,6 +213,7 @@ class SignalDesktopApp:
         ttk.Checkbutton(bar, text="显示 MA5/10/20", variable=self.show_ma_var, command=self._redraw_chart).grid(row=1, column=2, sticky="w", pady=(10, 0))
         ttk.Checkbutton(bar, text="显示买卖点", variable=self.show_markers_var, command=self._redraw_chart).grid(row=1, column=3, sticky="w", pady=(10, 0))
         ttk.Checkbutton(bar, text="显示十字光标", variable=self.show_crosshair_var).grid(row=1, column=4, sticky="w", pady=(10, 0))
+        ttk.Label(bar, text="提示：当前版本默认每5秒轮询一次，未收盘K线也会跟随刷新。", style="Mini.TLabel").grid(row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
         ttk.Label(bar, textvariable=self.status_var, style="Mini.TLabel").grid(row=1, column=5, columnspan=3, sticky="e", pady=(10, 0))
 
     def _build_summary_board(self, parent) -> None:
@@ -257,19 +258,22 @@ class SignalDesktopApp:
         ttk.Label(header, text="多图联动行情区", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(header, textvariable=self.hover_info_var, style="Mini.TLabel").pack(side=tk.RIGHT)
 
-        self.chart_stack = ttk.Frame(parent, style="Panel.TFrame")
-        self.chart_stack.pack(fill=tk.BOTH, expand=True)
-        self.chart_stack.columnconfigure(0, weight=1)
-        self.chart_stack.rowconfigure(0, weight=5)
-        self.chart_stack.rowconfigure(1, weight=2)
-        self.chart_stack.rowconfigure(2, weight=2)
+        chart_panes = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        chart_panes.pack(fill=tk.BOTH, expand=True)
 
-        self.price_canvas = tk.Canvas(self.chart_stack, highlightthickness=0)
-        self.rsi_canvas = tk.Canvas(self.chart_stack, highlightthickness=0)
-        self.macd_canvas = tk.Canvas(self.chart_stack, highlightthickness=0)
-        self.price_canvas.grid(row=0, column=0, sticky="nsew")
-        self.rsi_canvas.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
-        self.macd_canvas.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        price_wrap = ttk.LabelFrame(chart_panes, text="主图：K线 / MA / 买卖点", padding=6)
+        rsi_wrap = ttk.LabelFrame(chart_panes, text="副图一：RSI", padding=6)
+        macd_wrap = ttk.LabelFrame(chart_panes, text="副图二：MACD", padding=6)
+        chart_panes.add(price_wrap, weight=5)
+        chart_panes.add(rsi_wrap, weight=2)
+        chart_panes.add(macd_wrap, weight=2)
+
+        self.price_canvas = tk.Canvas(price_wrap, highlightthickness=0, height=420)
+        self.rsi_canvas = tk.Canvas(rsi_wrap, highlightthickness=0, height=170)
+        self.macd_canvas = tk.Canvas(macd_wrap, highlightthickness=0, height=170)
+        self.price_canvas.pack(fill=tk.BOTH, expand=True)
+        self.rsi_canvas.pack(fill=tk.BOTH, expand=True)
+        self.macd_canvas.pack(fill=tk.BOTH, expand=True)
 
         for canvas in (self.price_canvas, self.rsi_canvas, self.macd_canvas):
             canvas.bind("<Configure>", lambda _e: self._redraw_chart())
@@ -399,8 +403,8 @@ class SignalDesktopApp:
         try:
             seconds = max(5, int(self.refresh_seconds_var.get()))
         except ValueError:
-            seconds = 15
-            self.refresh_seconds_var.set("15")
+            seconds = 5
+            self.refresh_seconds_var.set("5")
         self._refresh_job = self.root.after(seconds * 1000, self.refresh_snapshot)
 
     def _cancel_refresh_job(self) -> None:
@@ -424,7 +428,7 @@ class SignalDesktopApp:
         self.equity_var.set(f"{snapshot['equity']:.2f} USDT")
         self.cash_var.set(f"{snapshot['cash']:.2f} USDT")
         self.candle_var.set(snapshot["latest_timestamp"].replace("T", " "))
-        self.quick_hint_var.set(f"当前建议：{recommendation_text} | 最新信号：{signal_text}")
+        self.quick_hint_var.set(f"当前建议：{recommendation_text} | 最新信号：{signal_text} | 轮询频率：{self.refresh_seconds_var.get()}秒")
         self._set_badge(snapshot["latest_signal_action"], snapshot["recommendation"])
 
     def _set_badge(self, action: str, recommendation: str) -> None:
@@ -580,7 +584,9 @@ class SignalDesktopApp:
             canvas.create_text(pad_left, height - 12, text="MA5", fill=t["blue"], anchor="w", font=("Consolas", 9, "bold"))
             canvas.create_text(pad_left + 45, height - 12, text="MA10", fill=t["purple"], anchor="w", font=("Consolas", 9, "bold"))
             canvas.create_text(pad_left + 98, height - 12, text="MA20", fill=t["orange"], anchor="w", font=("Consolas", 9, "bold"))
-        self.chart_footer_var.set(f"显示区间：{candles[0].timestamp.strftime('%Y-%m-%d %H:%M')} -> {candles[-1].timestamp.strftime('%Y-%m-%d %H:%M')}")
+        self.chart_footer_var.set(
+            f"显示区间：{candles[0].timestamp.strftime('%Y-%m-%d %H:%M')} -> {candles[-1].timestamp.strftime('%Y-%m-%d %H:%M')} | 最新K线每{self.refresh_seconds_var.get()}秒轮询更新"
+        )
 
     def _draw_rsi_panel(self, candles) -> None:
         t = self.theme
