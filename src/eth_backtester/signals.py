@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .backtest import BacktestConfig, BacktestEngine
+from .market_analysis import analyze_market
 from .models import BacktestResult, Candle, Signal, Trade
 
 
@@ -18,6 +19,15 @@ class SignalSnapshot:
     cash: float
     equity: float
     recommendation: str
+    suggested_side: str
+    suggested_entry: float
+    suggested_stop_loss: float
+    suggested_take_profit: float
+    market_regime: str
+    market_bias: str
+    market_confidence: float
+    strategy_label: str
+    strategy_description: str
     recent_trades: list[dict]
 
     def to_dict(self) -> dict:
@@ -32,6 +42,15 @@ class SignalSnapshot:
             "cash": self.cash,
             "equity": self.equity,
             "recommendation": self.recommendation,
+            "suggested_side": self.suggested_side,
+            "suggested_entry": self.suggested_entry,
+            "suggested_stop_loss": self.suggested_stop_loss,
+            "suggested_take_profit": self.suggested_take_profit,
+            "market_regime": self.market_regime,
+            "market_bias": self.market_bias,
+            "market_confidence": self.market_confidence,
+            "strategy_label": self.strategy_label,
+            "strategy_description": self.strategy_description,
             "recent_trades": self.recent_trades,
         }
 
@@ -55,6 +74,7 @@ def build_signal_snapshot(
     signals: list[Signal],
     config: BacktestConfig,
     recent_trades: int = 5,
+    timeframe: str = "15m",
 ) -> SignalSnapshot:
     if not candles or not signals:
         raise ValueError("candles and signals are required")
@@ -70,6 +90,8 @@ def build_signal_snapshot(
     else:
         recommendation = "enter_long" if latest_signal.action == "buy" else "stand_aside"
 
+    analysis = analyze_market(candles, timeframe)
+
     return SignalSnapshot(
         strategy_name=strategy_name,
         latest_timestamp=latest_candle.timestamp.isoformat(),
@@ -81,5 +103,14 @@ def build_signal_snapshot(
         cash=round(latest_equity_point.cash, 6),
         equity=round(latest_equity_point.equity, 6),
         recommendation=recommendation,
+        suggested_side=analysis.suggested_side,
+        suggested_entry=round(analysis.suggested_entry, 6),
+        suggested_stop_loss=round(analysis.suggested_stop_loss, 6),
+        suggested_take_profit=round(analysis.suggested_take_profit, 6),
+        market_regime=analysis.regime,
+        market_bias=analysis.bias,
+        market_confidence=round(analysis.confidence, 4),
+        strategy_label=analysis.strategy_label,
+        strategy_description=analysis.strategy_description,
         recent_trades=[_serialize_trade(trade) for trade in live_result.trades[-recent_trades:]],
     )

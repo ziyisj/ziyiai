@@ -2,6 +2,7 @@ const state = {
   refreshSeconds: 5,
   timers: new Set(),
   chartReady: false,
+  selectedBar: '15m',
 };
 
 const dom = {
@@ -9,12 +10,17 @@ const dom = {
   lastUpdate: document.getElementById('last-update'),
   metaStrategy: document.getElementById('meta-strategy'),
   metaInstrument: document.getElementById('meta-instrument'),
-  metaBar: document.getElementById('meta-bar'),
+  barSelect: document.getElementById('bar-select'),
   metaRefresh: document.getElementById('meta-refresh'),
   refreshBtn: document.getElementById('refresh-btn'),
   priceValue: document.getElementById('price-value'),
   signalValue: document.getElementById('signal-value'),
   recommendValue: document.getElementById('recommend-value'),
+  suggestedSide: document.getElementById('suggested-side'),
+  suggestedEntry: document.getElementById('suggested-entry'),
+  suggestedStopLoss: document.getElementById('suggested-stop-loss'),
+  suggestedTakeProfit: document.getElementById('suggested-take-profit'),
+  marketRegime: document.getElementById('market-regime'),
   positionValue: document.getElementById('position-value'),
   equityValue: document.getElementById('equity-value'),
   cashValue: document.getElementById('cash-value'),
@@ -22,6 +28,10 @@ const dom = {
   hoverInfo: document.getElementById('hover-info'),
   chartRange: document.getElementById('chart-range'),
   quickHint: document.getElementById('quick-hint'),
+  analysisTitle: document.getElementById('analysis-title'),
+  analysisBias: document.getElementById('analysis-bias'),
+  analysisConfidence: document.getElementById('analysis-confidence'),
+  analysisDescription: document.getElementById('analysis-description'),
   tradesBody: document.getElementById('trades-body'),
   jsonOutput: document.getElementById('json-output'),
   priceChart: document.getElementById('price-chart'),
@@ -186,16 +196,26 @@ function updateSummary(payload) {
   const s = payload.snapshot;
   dom.metaStrategy.textContent = payload.meta.strategy;
   dom.metaInstrument.textContent = payload.meta.instrument;
-  dom.metaBar.textContent = payload.meta.bar;
+  dom.barSelect.value = payload.meta.bar;
+  state.selectedBar = payload.meta.bar;
   dom.metaRefresh.textContent = `${payload.meta.refresh_seconds}秒`;
   dom.priceValue.textContent = `${Number(s.latest_close).toFixed(2)} USDT`;
   dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
   dom.recommendValue.textContent = mapRecommendation(s.recommendation);
+  dom.suggestedSide.textContent = s.suggested_side;
+  dom.suggestedEntry.textContent = `${Number(s.suggested_entry).toFixed(2)} USDT`;
+  dom.suggestedStopLoss.textContent = `${Number(s.suggested_stop_loss).toFixed(2)} USDT`;
+  dom.suggestedTakeProfit.textContent = `${Number(s.suggested_take_profit).toFixed(2)} USDT`;
+  dom.marketRegime.textContent = `${s.market_regime} / ${s.market_bias}`;
   dom.positionValue.textContent = mapPosition(s.current_position_state, s.current_position_qty);
   dom.equityValue.textContent = `${Number(s.equity).toFixed(2)} USDT`;
   dom.cashValue.textContent = `${Number(s.cash).toFixed(2)} USDT`;
   dom.candleTime.textContent = formatTimeLabel(s.latest_timestamp);
-  dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | 最新信号：${mapSignal(s.latest_signal_action, s.latest_signal_reason)} | 每${payload.meta.refresh_seconds}秒自动刷新`;
+  dom.analysisTitle.textContent = `${s.market_regime} · ${s.strategy_label}`;
+  dom.analysisBias.textContent = `行情倾向：${s.market_bias} | 建议方向：${s.suggested_side}`;
+  dom.analysisConfidence.textContent = `分析置信度：${(Number(s.market_confidence) * 100).toFixed(0)}% | 周期：${payload.meta.bar}`;
+  dom.analysisDescription.textContent = s.strategy_description;
+  dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | ${s.market_regime} | 建议方向：${s.suggested_side} | 开仓 ${Number(s.suggested_entry).toFixed(2)} / 止损 ${Number(s.suggested_stop_loss).toFixed(2)} / 止盈 ${Number(s.suggested_take_profit).toFixed(2)}`;
   dom.lastUpdate.textContent = `上次刷新：${new Date().toLocaleString('zh-CN')}`;
   setBadge(s);
 }
@@ -219,7 +239,8 @@ function updateTrades(trades) {
 }
 
 async function fetchDashboard() {
-  const res = await fetch('/api/dashboard', { cache: 'no-store' });
+  const params = new URLSearchParams({ bar: state.selectedBar });
+  const res = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
   const payload = await res.json();
   if (!res.ok) throw new Error(payload.error || '获取数据失败');
   state.refreshSeconds = payload.meta.refresh_seconds;
@@ -242,6 +263,12 @@ async function refreshLoop() {
 }
 
 dom.refreshBtn.addEventListener('click', () => {
+  window.clearTimeout(state.timerId);
+  refreshLoop();
+});
+
+dom.barSelect.addEventListener('change', () => {
+  state.selectedBar = dom.barSelect.value;
   window.clearTimeout(state.timerId);
   refreshLoop();
 });

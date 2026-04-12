@@ -35,6 +35,7 @@ def build_okx_live_snapshot_bundle(args: Namespace) -> tuple[list[Candle], Signa
         signals=signals,
         config=_build_backtest_config(args),
         recent_trades=args.recent_trades,
+        timeframe=getattr(args, "okx_bar", "15m"),
     )
     return candles, snapshot
 

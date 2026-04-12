@@ -31,7 +31,12 @@
           </div>
           <div class="toolbar-item">
             <label>周期</label>
-            <div id="meta-bar" class="toolbar-value">15m</div>
+            <select id="bar-select" class="toolbar-value">
+              <option value="5m">5m</option>
+              <option value="15m" selected>15m</option>
+              <option value="1H">1H</option>
+              <option value="4H">4H</option>
+            </select>
           </div>
           <div class="toolbar-item">
             <label>刷新频率</label>
@@ -45,6 +50,11 @@
         <div class="card metric"><span>最新价格</span><strong id="price-value">-</strong></div>
         <div class="card metric"><span>交易信号</span><strong id="signal-value">-</strong></div>
         <div class="card metric"><span>建议动作</span><strong id="recommend-value">-</strong></div>
+        <div class="card metric"><span>建议方向</span><strong id="suggested-side">-</strong></div>
+        <div class="card metric"><span>建议开仓价</span><strong id="suggested-entry">-</strong></div>
+        <div class="card metric"><span>建议止损</span><strong id="suggested-stop-loss">-</strong></div>
+        <div class="card metric"><span>建议止盈</span><strong id="suggested-take-profit">-</strong></div>
+        <div class="card metric"><span>当前行情分析</span><strong id="market-regime">-</strong></div>
         <div class="card metric"><span>当前仓位</span><strong id="position-value">-</strong></div>
         <div class="card metric"><span>账户权益</span><strong id="equity-value">-</strong></div>
         <div class="card metric"><span>账户现金</span><strong id="cash-value">-</strong></div>
@@ -77,6 +87,16 @@
               <li>▲ 买入点，▼ 卖出点</li>
               <li>下方副图：RSI 与 MACD</li>
             </ul>
+          </section>
+
+          <section class="card side-card">
+            <div class="panel-header">
+              <h2>行情分析</h2>
+            </div>
+            <div class="quick-hint" id="analysis-title">等待分析</div>
+            <div class="muted" id="analysis-bias">-</div>
+            <div class="muted" id="analysis-confidence">-</div>
+            <p id="analysis-description" class="muted">等待分析结果</p>
           </section>
 
           <section class="card side-card trades-card">

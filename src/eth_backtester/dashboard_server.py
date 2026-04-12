@@ -9,7 +9,7 @@ import webbrowser
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .cli import apply_preset_args, build_parser
 from .indicators import exponential_moving_average, relative_strength_index, simple_moving_average
@@ -69,18 +69,26 @@ class DashboardState:
         self.args = args
         self.lock = threading.Lock()
 
-    def fetch_payload(self) -> dict:
+    def _resolve_args(self, bar: str | None = None) -> argparse.Namespace:
+        if not bar or bar == self.args.okx_bar:
+            return self.args
+        merged = vars(self.args).copy()
+        merged["okx_bar"] = bar
+        return argparse.Namespace(**merged)
+
+    def fetch_payload(self, bar: str | None = None) -> dict:
+        resolved_args = self._resolve_args(bar)
         with self.lock:
-            candles, snapshot = build_okx_live_snapshot_bundle(self.args)
+            candles, snapshot = build_okx_live_snapshot_bundle(resolved_args)
         return {
             "snapshot": snapshot.to_dict(),
             "candles": _serialize_candles(candles),
             "indicators": _build_indicator_payload(candles),
             "meta": {
-                "refresh_seconds": max(2, int(getattr(self.args, "dashboard_refresh_seconds", 5))),
-                "instrument": self.args.okx_inst_id,
-                "bar": self.args.okx_bar,
-                "strategy": self.args.strategy,
+                "refresh_seconds": max(2, int(getattr(resolved_args, "dashboard_refresh_seconds", 5))),
+                "instrument": resolved_args.okx_inst_id,
+                "bar": resolved_args.okx_bar,
+                "strategy": resolved_args.strategy,
             },
         }
 
@@ -97,7 +105,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/dashboard":
             try:
-                payload = self.state.fetch_payload()
+                params = parse_qs(parsed.query)
+                bar = params.get("bar", [None])[0]
+                payload = self.state.fetch_payload(bar=bar)
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

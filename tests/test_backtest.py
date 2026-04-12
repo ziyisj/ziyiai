@@ -23,6 +23,7 @@ from eth_backtester.download import (
 )
 from eth_backtester.live import build_okx_live_signal_snapshot
 from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
+from eth_backtester.market_analysis import analyze_market
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
 from eth_backtester.models import Candle, Signal
@@ -467,6 +468,9 @@ def test_signal_snapshot_reports_live_position_state(tmp_path: Path) -> None:
     assert snapshot.recommendation in {"enter_long", "exit_long", "hold_long", "stand_aside"}
     assert snapshot.current_position_state in {"flat", "long"}
     assert snapshot.latest_signal_action in {"buy", "sell", "hold"}
+    assert snapshot.market_regime in {"上涨趋势", "下跌趋势", "震荡"}
+    assert snapshot.suggested_side in {"做多", "做空", "低吸做多", "高抛做空"}
+    assert snapshot.suggested_stop_loss != snapshot.suggested_take_profit
     assert len(snapshot.recent_trades) <= 5
 
 
@@ -501,6 +505,22 @@ def test_build_okx_live_signal_snapshot_uses_live_data(monkeypatch) -> None:
     assert snapshot.strategy_name == "macd"
     assert snapshot.latest_timestamp == candles[-1].timestamp.isoformat()
     assert snapshot.latest_close == candles[-1].close
+    assert snapshot.market_regime in {"上涨趋势", "下跌趋势", "震荡"}
+
+
+def test_market_analysis_supports_trend_and_range_regimes() -> None:
+    uptrend = _make_15m_candles([100 + i for i in range(60)])
+    rangebound = _make_15m_candles([100, 101, 99, 100, 102, 98] * 10)
+
+    up = analyze_market(uptrend, "15m")
+    rg = analyze_market(rangebound, "1H")
+
+    assert up.regime == "上涨趋势"
+    assert up.suggested_side == "做多"
+    assert up.suggested_take_profit > up.suggested_entry > up.suggested_stop_loss
+
+    assert rg.regime in {"震荡", "下跌趋势", "上涨趋势"}
+    assert rg.strategy_label in {"区间震荡策略", "顺势回踩做多", "顺势反弹做空"}
 
 
 def test_intraday_optimization_report_runs(tmp_path: Path) -> None:
@@ -603,6 +623,15 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
                 "latest_signal_action": "hold",
                 "latest_signal_reason": "test",
                 "recommendation": "stand_aside",
+                "suggested_side": "做多",
+                "suggested_entry": candles[-1].close - 1,
+                "suggested_stop_loss": candles[-1].close - 5,
+                "suggested_take_profit": candles[-1].close + 8,
+                "market_regime": "上涨趋势",
+                "market_bias": "偏多",
+                "market_confidence": 0.8,
+                "strategy_label": "顺势回踩做多",
+                "strategy_description": "test",
                 "current_position_state": "flat",
                 "current_position_qty": 0.0,
                 "equity": 10000.0,
@@ -621,9 +650,10 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
     try:
         from urllib.request import urlopen
 
-        with urlopen(f"{url}api/dashboard", timeout=5) as response:
+        with urlopen(f"{url}api/dashboard?bar=1H", timeout=5) as response:
             payload = json.load(response)
         assert payload["meta"]["instrument"] == "ETH-USDT-SWAP"
+        assert payload["meta"]["bar"] == "1H"
         assert len(payload["candles"]) == len(candles)
         assert payload["snapshot"]["latest_close"] == candles[-1].close
     finally:
