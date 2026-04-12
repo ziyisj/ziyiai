@@ -9,7 +9,7 @@ description = "ETH strategy research and backtesting MVP"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Hermes Agent" }]
-dependencies = []
+dependencies = ["websockets>=12,<16"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9"]

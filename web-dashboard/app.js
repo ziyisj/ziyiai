@@ -1,5 +1,5 @@
 const state = {
-  refreshSeconds: 5,
+  refreshSeconds: 1,
   timers: new Set(),
   chartReady: false,
   selectedBar: '15m',

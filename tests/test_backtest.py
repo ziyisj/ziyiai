@@ -24,6 +24,7 @@ from eth_backtester.download import (
 from eth_backtester.live import build_okx_live_signal_snapshot
 from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
 from eth_backtester.market_analysis import analyze_market
+from eth_backtester.okx_ws_public import OKXPublicWebSocketClient, normalize_ws_channel_for_bar
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
 from eth_backtester.models import Candle, Signal
@@ -521,6 +522,27 @@ def test_market_analysis_supports_trend_and_range_regimes() -> None:
 
     assert rg.regime in {"震荡", "下跌趋势", "上涨趋势"}
     assert rg.strategy_label in {"区间震荡策略", "顺势回踩做多", "顺势反弹做空"}
+
+
+def test_okx_ws_client_updates_ticker_and_candles() -> None:
+    client = OKXPublicWebSocketClient("ETH-USDT-SWAP", "15m", max_candles=10)
+    client.set_seed_candles(_make_15m_candles([100 + i for i in range(5)]))
+    client._handle_message({
+        "arg": {"channel": "tickers"},
+        "data": [{"last": "1234.56", "ts": "1704067200000"}],
+    })
+    snap = client.get_snapshot()
+    assert snap.latest_price == 1234.56
+    assert snap.latest_price_ts == "2024-01-01T00:00:00"
+
+    client._handle_message({
+        "arg": {"channel": "candle15m"},
+        "data": [["1704070800000", "101", "105", "99", "104", "88", "0", "0", "1"]],
+    })
+    snap = client.get_snapshot()
+    assert snap.candles is not None
+    assert snap.candles[-1].close == 104.0
+    assert normalize_ws_channel_for_bar("15m") == "candle15m"
 
 
 def test_intraday_optimization_report_runs(tmp_path: Path) -> None:

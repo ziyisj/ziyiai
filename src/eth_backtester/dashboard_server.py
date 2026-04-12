@@ -85,7 +85,7 @@ class DashboardState:
             "candles": _serialize_candles(candles),
             "indicators": _build_indicator_payload(candles),
             "meta": {
-                "refresh_seconds": max(2, int(getattr(resolved_args, "dashboard_refresh_seconds", 5))),
+                "refresh_seconds": max(1, int(getattr(resolved_args, "dashboard_refresh_seconds", 1))),
                 "instrument": resolved_args.okx_inst_id,
                 "bar": resolved_args.okx_bar,
                 "strategy": resolved_args.strategy,
@@ -134,7 +134,7 @@ def build_dashboard_args(cli_args: list[str] | None = None) -> argparse.Namespac
     parser = build_parser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--dashboard-refresh-seconds", type=int, default=5)
+    parser.add_argument("--dashboard-refresh-seconds", type=int, default=1)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--browser-path", type=Path)
 
