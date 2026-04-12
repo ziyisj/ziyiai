@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'windows-desktop/**'
+      - 'web-dashboard/**'
       - 'src/eth_backtester/**'
       - 'presets/**'
       - 'tradingview/**'

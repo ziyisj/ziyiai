@@ -16,6 +16,7 @@ dev = ["pytest>=8.0,<9"]
 
 [project.scripts]
 eth-backtest = "eth_backtester.cli:main"
+eth-dashboard = "eth_backtester.dashboard_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
