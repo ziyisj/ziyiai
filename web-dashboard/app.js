@@ -92,22 +92,22 @@ function setupCharts() {
   state.rsiChartObj = LightweightCharts.createChart(dom.rsiChart, { ...chartTheme, height: dom.rsiChart.clientHeight });
   state.macdChartObj = LightweightCharts.createChart(dom.macdChart, { ...chartTheme, height: dom.macdChart.clientHeight });
 
-  state.candleSeries = state.priceChartObj.addCandlestickSeries({
+  state.candleSeries = state.priceChartObj.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: '#22c55e', downColor: '#ef4444', borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444'
   });
-  state.ma5Series = state.priceChartObj.addLineSeries({ color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.ma10Series = state.priceChartObj.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.ma20Series = state.priceChartObj.addLineSeries({ color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.ma5Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.ma10Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.ma20Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
 
-  state.rsiSeries = state.rsiChartObj.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.rsiTop = state.rsiChartObj.addLineSeries({ color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
-  state.rsiMid = state.rsiChartObj.addLineSeries({ color: '#3b4a61', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
-  state.rsiLow = state.rsiChartObj.addLineSeries({ color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiSeries = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.rsiTop = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiMid = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#3b4a61', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiLow = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
   state.rsiChartObj.priceScale('right').applyOptions({ autoScale: false, scaleMargins: { top: 0.15, bottom: 0.15 } });
 
-  state.macdSeries = state.macdChartObj.addLineSeries({ color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.macdSignalSeries = state.macdChartObj.addLineSeries({ color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.macdHistSeries = state.macdChartObj.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, base: 0 });
+  state.macdSeries = state.macdChartObj.addSeries(LightweightCharts.LineSeries, { color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.macdSignalSeries = state.macdChartObj.addSeries(LightweightCharts.LineSeries, { color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  state.macdHistSeries = state.macdChartObj.addSeries(LightweightCharts.HistogramSeries, { priceLineVisible: false, lastValueVisible: false, base: 0 });
 
   syncCharts(state.priceChartObj, state.rsiChartObj);
   syncCharts(state.priceChartObj, state.macdChartObj);
@@ -154,7 +154,7 @@ function updateCharts(payload) {
   const indicators = payload.indicators;
 
   state.candleSeries.setData(candles);
-  state.candleSeries.setMarkers(buildMarkers(payload.snapshot.recent_trades || []));
+  LightweightCharts.createSeriesMarkers(state.candleSeries, buildMarkers(payload.snapshot.recent_trades || []));
   state.ma5Series.setData(makeLineData(candleSource, indicators.ma5));
   state.ma10Series.setData(makeLineData(candleSource, indicators.ma10));
   state.ma20Series.setData(makeLineData(candleSource, indicators.ma20));
