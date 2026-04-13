@@ -16,6 +16,7 @@ from .indicators import exponential_moving_average, relative_strength_index, sim
 from .live import build_okx_live_dashboard_bundle
 
 
+
 def get_runtime_root() -> Path:
     import sys
 
@@ -30,6 +31,7 @@ STATIC_DIR = ROOT / "web-dashboard"
 DEFAULT_PRESET = ROOT / "presets" / "okx_15m_mtf_production_candidate.json"
 
 
+
 def _serialize_candles(candles):
     return [
         {
@@ -42,6 +44,7 @@ def _serialize_candles(candles):
         }
         for candle in candles
     ]
+
 
 
 def _build_indicator_payload(candles):
@@ -86,7 +89,7 @@ class DashboardState:
             "indicators": _build_indicator_payload(candles),
             "realtime": realtime,
             "meta": {
-                "refresh_seconds": max(1, int(getattr(resolved_args, "dashboard_refresh_seconds", 1))),
+                "refresh_seconds": max(2, int(getattr(resolved_args, "dashboard_refresh_seconds", 5))),
                 "instrument": resolved_args.okx_inst_id,
                 "bar": resolved_args.okx_bar,
                 "strategy": resolved_args.strategy,
@@ -103,67 +106,68 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         return
 
-    def _serve_sse_stream(self, bar: str | None = None) -> None:
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/dashboard":
+            params = parse_qs(parsed.query)
+            bar = params.get("bar", [None])[0]
+            return self._serve_dashboard_payload(bar=bar)
+        if parsed.path == "/api/dashboard-stream":
+            params = parse_qs(parsed.query)
+            bar = params.get("bar", [None])[0]
+            return self._serve_dashboard_stream(bar=bar)
+        return super().do_GET()
+
+    def _serve_dashboard_payload(self, bar: str | None = None):
+        try:
+            payload = self.state.fetch_payload(bar=bar)
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
+            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def _serve_dashboard_stream(self, bar: str | None = None):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        previous_body = None
-        while True:
-            payload = self.state.fetch_payload(bar=bar)
-            body = json.dumps(payload, ensure_ascii=False)
-            if body != previous_body:
-                self.wfile.write(f"event: dashboard\ndata: {body}\n\n".encode("utf-8"))
-                self.wfile.flush()
-                previous_body = body
-            time.sleep(0.1)
-
-    def _write_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/dashboard":
-            try:
-                params = parse_qs(parsed.query)
-                bar = params.get("bar", [None])[0]
+        last_signature: str | None = None
+        try:
+            while True:
                 payload = self.state.fetch_payload(bar=bar)
-                self._write_json(payload)
-            except Exception as exc:
-                self._write_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                if signature != last_signature:
+                    frame = f"event: dashboard\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+                    last_signature = signature
+                time.sleep(0.25)
+        except (BrokenPipeError, ConnectionResetError):
             return
-
-        if parsed.path == "/api/dashboard-stream":
-            try:
-                params = parse_qs(parsed.query)
-                bar = params.get("bar", [None])[0]
-                self._serve_sse_stream(bar=bar)
-            except (BrokenPipeError, ConnectionResetError):
-                return
-            except Exception as exc:
-                self._write_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
-
-        return super().do_GET()
 
 
 class ReusableHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+
 def build_dashboard_args(cli_args: list[str] | None = None) -> argparse.Namespace:
     parser = build_parser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--dashboard-refresh-seconds", type=int, default=1)
+    parser.add_argument("--dashboard-refresh-seconds", type=int, default=5)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--browser-path", type=Path)
 
@@ -182,6 +186,7 @@ def build_dashboard_args(cli_args: list[str] | None = None) -> argparse.Namespac
     return apply_preset_args(args)
 
 
+
 def create_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServer, str]:
     state = DashboardState(args)
 
@@ -192,6 +197,7 @@ def create_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServe
     actual_port = server.server_address[1]
     url = f"http://{args.host}:{actual_port}/"
     return server, url
+
 
 
 def wait_for_server(url: str, timeout: float = 10.0) -> None:
@@ -208,6 +214,7 @@ def wait_for_server(url: str, timeout: float = 10.0) -> None:
     raise TimeoutError(f"Dashboard server did not become ready within {timeout} seconds: {url}")
 
 
+
 def start_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServer, str, threading.Thread]:
     server, url = create_dashboard_server(args)
     thread = threading.Thread(target=server.serve_forever, name="eth-dashboard-server", daemon=True)
@@ -220,6 +227,7 @@ def start_dashboard_server(args: argparse.Namespace) -> tuple[ReusableHTTPServer
         thread.join(timeout=2)
         raise
     return server, url, thread
+
 
 
 def run_dashboard_server(args: argparse.Namespace) -> str:
@@ -235,6 +243,7 @@ def run_dashboard_server(args: argparse.Namespace) -> str:
         server.shutdown()
         server.server_close()
     return url
+
 
 
 def main(cli_args: list[str] | None = None) -> None:

@@ -4,171 +4,169 @@ import asyncio
 import json
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
+import websockets
+
+from .download import fetch_eth_ohlcv_from_okx
 from .models import Candle
-
-try:
-    import websockets
-except Exception:  # pragma: no cover
-    websockets = None
-
 
 OKX_PUBLIC_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 
 
-@dataclass
-class RealtimeMarketSnapshot:
-    inst_id: str
-    bar: str
-    latest_price: float | None = None
-    latest_price_ts: str | None = None
-    candles: list[Candle] | None = None
-    status: str = "disconnected"
-    last_error: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "inst_id": self.inst_id,
-            "bar": self.bar,
-            "latest_price": self.latest_price,
-            "latest_price_ts": self.latest_price_ts,
-            "status": self.status,
-            "last_error": self.last_error,
-            "candles": [
-                {
-                    "time": candle.timestamp.isoformat(),
-                    "open": candle.open,
-                    "high": candle.high,
-                    "low": candle.low,
-                    "close": candle.close,
-                    "volume": candle.volume,
-                }
-                for candle in (self.candles or [])
-            ],
-        }
-
-
-class OKXPublicWebSocketClient:
-    def __init__(self, inst_id: str, bar: str, max_candles: int = 300, url: str = OKX_PUBLIC_WS_URL) -> None:
+class OKXPublicRealtimeFeed:
+    def __init__(self, inst_id: str, bar: str, candles_limit: int = 300) -> None:
         self.inst_id = inst_id
         self.bar = bar
-        self.max_candles = max_candles
-        self.url = url
-        self.snapshot = RealtimeMarketSnapshot(inst_id=inst_id, bar=bar, candles=[])
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
+        self.candles_limit = candles_limit
         self._lock = threading.Lock()
-
-    def set_seed_candles(self, candles: list[Candle]) -> None:
-        with self._lock:
-            self.snapshot.candles = list(candles)[-self.max_candles:]
-            if self.snapshot.candles and self.snapshot.latest_price is None:
-                self.snapshot.latest_price = self.snapshot.candles[-1].close
-                self.snapshot.latest_price_ts = self.snapshot.candles[-1].timestamp.isoformat()
-
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run_loop, name=f"okx-ws-{self.inst_id}-{self.bar}", daemon=True)
+        self._stop_event = threading.Event()
+        self._candles: list[Candle] = []
+        self._latest_price: float | None = None
+        self._latest_price_ts: str | None = None
+        self._status = "connecting"
+        self._last_error: str | None = None
+        self._seed_candles()
+        self._thread = threading.Thread(target=self._run_loop, name=f"okx-ws-{inst_id}-{bar}", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
-
-    def get_snapshot(self) -> RealtimeMarketSnapshot:
-        with self._lock:
-            return RealtimeMarketSnapshot(
-                inst_id=self.snapshot.inst_id,
-                bar=self.snapshot.bar,
-                latest_price=self.snapshot.latest_price,
-                latest_price_ts=self.snapshot.latest_price_ts,
-                candles=list(self.snapshot.candles or []),
-                status=self.snapshot.status,
-                last_error=self.snapshot.last_error,
-            )
+    def _seed_candles(self) -> None:
+        try:
+            candles = fetch_eth_ohlcv_from_okx(inst_id=self.inst_id, bar=self.bar, candles_limit=self.candles_limit)
+            with self._lock:
+                self._candles = candles
+                self._status = "connecting"
+                self._last_error = None
+        except Exception as exc:
+            with self._lock:
+                self._status = "error"
+                self._last_error = f"REST seed failed: {exc}"
 
     def _run_loop(self) -> None:
-        asyncio.run(self._run())
+        asyncio.run(self._runner())
 
-    async def _run(self) -> None:
-        if websockets is None:
+    async def _runner(self) -> None:
+        backoff_seconds = 1.0
+        while not self._stop_event.is_set():
+            try:
+                await self._run_ws_session()
+                backoff_seconds = 1.0
+            except Exception as exc:
+                with self._lock:
+                    self._status = "error"
+                    self._last_error = str(exc)
+                if self._stop_event.is_set():
+                    return
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2.0, 10.0)
+
+    async def _run_ws_session(self) -> None:
+        async with websockets.connect(OKX_PUBLIC_WS_URL, ping_interval=20, ping_timeout=20, max_size=2**20) as websocket:
+            subscribe_payload = {
+                "op": "subscribe",
+                "args": [
+                    {"channel": "tickers", "instId": self.inst_id},
+                    {"channel": f"candle{self.bar}", "instId": self.inst_id},
+                ],
+            }
+            await websocket.send(json.dumps(subscribe_payload))
             with self._lock:
-                self.snapshot.status = "error"
-                self.snapshot.last_error = "websockets dependency is not installed"
+                self._status = "connected"
+                self._last_error = None
+            async for raw_message in websocket:
+                if self._stop_event.is_set():
+                    return
+                self._handle_message(raw_message)
+
+    def _handle_message(self, raw_message: str) -> None:
+        payload = json.loads(raw_message)
+        if payload.get("event"):
+            if payload.get("event") == "error":
+                with self._lock:
+                    self._status = "error"
+                    self._last_error = payload.get("msg") or "unknown OKX websocket error"
             return
 
-        while not self._stop.is_set():
-            try:
-                with self._lock:
-                    self.snapshot.status = "connecting"
-                    self.snapshot.last_error = None
-                async with websockets.connect(self.url, ping_interval=20, ping_timeout=20) as ws:
-                    await ws.send(json.dumps({
-                        "op": "subscribe",
-                        "args": [
-                            {"channel": "tickers", "instId": self.inst_id},
-                            {"channel": "candle" + self.bar, "instId": self.inst_id},
-                        ],
-                    }))
-                    with self._lock:
-                        self.snapshot.status = "connected"
-                    while not self._stop.is_set():
-                        raw = await asyncio.wait_for(ws.recv(), timeout=30)
-                        self._handle_message(json.loads(raw))
-            except Exception as exc:  # pragma: no cover
-                with self._lock:
-                    self.snapshot.status = "error"
-                    self.snapshot.last_error = str(exc)
-                await asyncio.sleep(2)
+        channel = (payload.get("arg") or {}).get("channel", "")
+        data = payload.get("data") or []
+        if channel == "tickers":
+            self._handle_ticker_update(data)
+            return
+        if channel.startswith("candle"):
+            self._handle_candle_update(data)
 
-    def _handle_message(self, message: dict[str, Any]) -> None:
-        arg = message.get("arg") or {}
-        channel = arg.get("channel", "")
-        data = message.get("data") or []
-        if not data:
+    def _handle_ticker_update(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        row = rows[0]
+        last = row.get("last")
+        if last in {None, ""}:
+            return
+        latest_price = float(last)
+        latest_ts = self._format_timestamp(row.get("ts"))
+        with self._lock:
+            self._latest_price = latest_price
+            self._latest_price_ts = latest_ts
+            self._status = "connected"
+
+    def _handle_candle_update(self, rows: list[list[str]]) -> None:
+        parsed_rows: list[Candle] = []
+        for row in rows:
+            if len(row) < 6:
+                continue
+            timestamp_ms, open_price, high, low, close, volume, *_rest = row
+            parsed_rows.append(
+                Candle(
+                    timestamp=self._parse_okx_timestamp(timestamp_ms),
+                    open=float(open_price),
+                    high=float(high),
+                    low=float(low),
+                    close=float(close),
+                    volume=float(volume),
+                )
+            )
+        if not parsed_rows:
             return
 
         with self._lock:
-            if channel == "tickers":
-                item = data[0]
-                last = item.get("last")
-                ts = item.get("ts")
-                if last is not None:
-                    self.snapshot.latest_price = float(last)
-                if ts is not None:
-                    self.snapshot.latest_price_ts = datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).replace(tzinfo=None).isoformat()
-                return
+            for candle in sorted(parsed_rows, key=lambda item: item.timestamp):
+                if self._candles and self._candles[-1].timestamp == candle.timestamp:
+                    self._candles[-1] = candle
+                elif self._candles and any(existing.timestamp == candle.timestamp for existing in self._candles[-3:]):
+                    self._candles = [candle if existing.timestamp == candle.timestamp else existing for existing in self._candles]
+                elif not self._candles or candle.timestamp > self._candles[-1].timestamp:
+                    self._candles.append(candle)
+                    self._candles = self._candles[-self.candles_limit :]
+            self._status = "connected"
 
-            if channel.startswith("candle"):
-                parsed: list[Candle] = []
-                for row in reversed(data):
-                    ts, open_price, high, low, close, *_rest = row
-                    vol = row[5] if len(row) > 5 else 0.0
-                    parsed.append(
-                        Candle(
-                            timestamp=datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).replace(tzinfo=None),
-                            open=float(open_price),
-                            high=float(high),
-                            low=float(low),
-                            close=float(close),
-                            volume=float(vol),
-                        )
-                    )
-                existing = self.snapshot.candles or []
-                by_ts = {c.timestamp: c for c in existing}
-                for candle in parsed:
-                    by_ts[candle.timestamp] = candle
-                self.snapshot.candles = sorted(by_ts.values(), key=lambda c: c.timestamp)[-self.max_candles:]
-                if self.snapshot.candles:
-                    self.snapshot.latest_price = self.snapshot.candles[-1].close
-                    self.snapshot.latest_price_ts = self.snapshot.candles[-1].timestamp.isoformat()
+    def snapshot(self) -> dict:
+        with self._lock:
+            candles = list(self._candles)
+            latest_price = self._latest_price
+            latest_price_ts = self._latest_price_ts
+            status = self._status
+            last_error = self._last_error
+        return {
+            "candles": candles,
+            "latest_price": latest_price,
+            "latest_price_ts": latest_price_ts,
+            "status": status,
+            "last_error": last_error,
+            "transport": "okx_ws_public",
+            "updated_at": time.time(),
+        }
 
+    def stop(self) -> None:
+        self._stop_event.set()
 
-def normalize_ws_channel_for_bar(bar: str) -> str:
-    return "candle" + bar
+    @staticmethod
+    def _parse_okx_timestamp(timestamp_ms: str | int | None) -> datetime:
+        if timestamp_ms in {None, ""}:
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+        return datetime.fromtimestamp(int(timestamp_ms) / 1000, tz=timezone.utc).replace(tzinfo=None)
+
+    @staticmethod
+    def _format_timestamp(timestamp_ms: str | int | None) -> str | None:
+        if timestamp_ms in {None, ""}:
+            return None
+        return datetime.fromtimestamp(int(timestamp_ms) / 1000, tz=timezone.utc).replace(tzinfo=None).isoformat()

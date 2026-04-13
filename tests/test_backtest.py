@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -23,8 +24,6 @@ from eth_backtester.download import (
 )
 from eth_backtester.live import build_okx_live_signal_snapshot
 from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
-from eth_backtester.market_analysis import analyze_market
-from eth_backtester.okx_ws_public import OKXPublicWebSocketClient, normalize_ws_channel_for_bar
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
 from eth_backtester.models import Candle, Signal
@@ -469,22 +468,33 @@ def test_signal_snapshot_reports_live_position_state(tmp_path: Path) -> None:
     assert snapshot.recommendation in {"enter_long", "exit_long", "hold_long", "stand_aside"}
     assert snapshot.current_position_state in {"flat", "long"}
     assert snapshot.latest_signal_action in {"buy", "sell", "hold"}
-    assert snapshot.market_regime in {"上涨趋势", "下跌趋势", "震荡"}
-    assert snapshot.suggested_side in {"做多", "做空", "低吸做多", "高抛做空"}
-    assert snapshot.suggested_stop_loss != snapshot.suggested_take_profit
     assert len(snapshot.recent_trades) <= 5
 
 
 def test_build_okx_live_signal_snapshot_uses_live_data(monkeypatch) -> None:
     candles = _make_15m_candles([100 + i for i in range(120)])
 
-    def fake_fetch_eth_ohlcv_from_okx(inst_id: str = "ETH-USDT-SWAP", bar: str = "15m", candles_limit: int = 300, request_limit: int = 100):
-        assert inst_id == "ETH-USDT-SWAP"
-        assert bar == "15m"
-        assert candles_limit == 120
-        return candles
+    @dataclass(frozen=True)
+    class DummySnapshot:
+        strategy_name: str = "macd"
+        latest_timestamp: str = candles[-1].timestamp.isoformat()
+        latest_close: float = candles[-1].close + 1.5
 
-    monkeypatch.setattr("eth_backtester.live.fetch_eth_ohlcv_from_okx", fake_fetch_eth_ohlcv_from_okx)
+    monkeypatch.setattr(
+        "eth_backtester.live.build_okx_live_dashboard_bundle",
+        lambda args: (
+            candles,
+            DummySnapshot(),
+            {
+                "latest_price": candles[-1].close + 1.5,
+                "latest_price_ts": candles[-1].timestamp.isoformat(),
+                "latest_candle_close": candles[-1].close,
+                "status": "connected",
+                "last_error": None,
+                "transport": "okx_ws_public",
+            },
+        ),
+    )
     parser = build_parser()
     args = parser.parse_args([
         "--strategy",
@@ -505,44 +515,7 @@ def test_build_okx_live_signal_snapshot_uses_live_data(monkeypatch) -> None:
 
     assert snapshot.strategy_name == "macd"
     assert snapshot.latest_timestamp == candles[-1].timestamp.isoformat()
-    assert snapshot.latest_close == candles[-1].close
-    assert snapshot.market_regime in {"上涨趋势", "下跌趋势", "震荡"}
-
-
-def test_market_analysis_supports_trend_and_range_regimes() -> None:
-    uptrend = _make_15m_candles([100 + i for i in range(60)])
-    rangebound = _make_15m_candles([100, 101, 99, 100, 102, 98] * 10)
-
-    up = analyze_market(uptrend, "15m")
-    rg = analyze_market(rangebound, "1H")
-
-    assert up.regime == "上涨趋势"
-    assert up.suggested_side == "做多"
-    assert up.suggested_take_profit > up.suggested_entry > up.suggested_stop_loss
-
-    assert rg.regime in {"震荡", "下跌趋势", "上涨趋势"}
-    assert rg.strategy_label in {"区间震荡策略", "顺势回踩做多", "顺势反弹做空"}
-
-
-def test_okx_ws_client_updates_ticker_and_candles() -> None:
-    client = OKXPublicWebSocketClient("ETH-USDT-SWAP", "15m", max_candles=10)
-    client.set_seed_candles(_make_15m_candles([100 + i for i in range(5)]))
-    client._handle_message({
-        "arg": {"channel": "tickers"},
-        "data": [{"last": "1234.56", "ts": "1704067200000"}],
-    })
-    snap = client.get_snapshot()
-    assert snap.latest_price == 1234.56
-    assert snap.latest_price_ts == "2024-01-01T00:00:00"
-
-    client._handle_message({
-        "arg": {"channel": "candle15m"},
-        "data": [["1704070800000", "101", "105", "99", "104", "88", "0", "0", "1"]],
-    })
-    snap = client.get_snapshot()
-    assert snap.candles is not None
-    assert snap.candles[-1].close == 104.0
-    assert normalize_ws_channel_for_bar("15m") == "candle15m"
+    assert snapshot.latest_close == candles[-1].close + 1.5
 
 
 def test_intraday_optimization_report_runs(tmp_path: Path) -> None:
@@ -645,15 +618,6 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
                 "latest_signal_action": "hold",
                 "latest_signal_reason": "test",
                 "recommendation": "stand_aside",
-                "suggested_side": "做多",
-                "suggested_entry": candles[-1].close - 1,
-                "suggested_stop_loss": candles[-1].close - 5,
-                "suggested_take_profit": candles[-1].close + 8,
-                "market_regime": "上涨趋势",
-                "market_bias": "偏多",
-                "market_confidence": 0.8,
-                "strategy_label": "顺势回踩做多",
-                "strategy_description": "test",
                 "current_position_state": "flat",
                 "current_position_qty": 0.0,
                 "equity": 10000.0,
@@ -668,7 +632,7 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
             candles,
             DummySnapshot(),
             {
-                "latest_price": candles[-1].close + 0.5,
+                "latest_price": candles[-1].close,
                 "latest_price_ts": candles[-1].timestamp.isoformat(),
                 "latest_candle_close": candles[-1].close,
                 "status": "connected",
@@ -683,36 +647,63 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
     try:
         from urllib.request import urlopen
 
-        with urlopen(f"{url}api/dashboard?bar=1H", timeout=5) as response:
+        with urlopen(f"{url}api/dashboard", timeout=5) as response:
             payload = json.load(response)
         assert payload["meta"]["instrument"] == "ETH-USDT-SWAP"
-        assert payload["meta"]["bar"] == "1H"
-        assert payload["meta"]["stream_url"] == "/api/dashboard-stream?bar=1H"
         assert len(payload["candles"]) == len(candles)
         assert payload["snapshot"]["latest_close"] == candles[-1].close
         assert payload["realtime"]["status"] == "connected"
-        assert payload["realtime"]["latest_price"] == candles[-1].close + 0.5
-
-        with urlopen(f"{url}api/dashboard-stream?bar=1H", timeout=5) as response:
-            chunk = response.read(4096).decode("utf-8")
-        assert "event: dashboard" in chunk
-        assert '"snapshot": {' in chunk
+        assert payload["meta"]["stream_url"].startswith("/api/dashboard-stream")
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_launcher_runtime_assets_do_not_require_src_directory(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "bundle"
-    (runtime_root / "web-dashboard").mkdir(parents=True)
-    (runtime_root / "presets").mkdir(parents=True)
-    (runtime_root / "web-dashboard" / "index.html").write_text("<html></html>", encoding="utf-8")
-    (runtime_root / "presets" / "okx_15m_mtf_production_candidate.json").write_text("{}", encoding="utf-8")
+def test_dashboard_stream_emits_sse_frame(monkeypatch) -> None:
+    candles = _make_15m_candles([200 + i for i in range(8)])
 
-    required_paths = [
-        runtime_root / "web-dashboard" / "index.html",
-        runtime_root / "presets" / "okx_15m_mtf_production_candidate.json",
-    ]
-    missing = [str(path) for path in required_paths if not path.exists()]
-    assert missing == []
-    assert not (runtime_root / "src").exists()
+    class DummySnapshot:
+        def to_dict(self):
+            return {
+                "latest_close": candles[-1].close,
+                "latest_signal_action": "hold",
+                "latest_signal_reason": "stream-test",
+                "recommendation": "stand_aside",
+                "current_position_state": "flat",
+                "current_position_qty": 0.0,
+                "equity": 10000.0,
+                "cash": 10000.0,
+                "latest_timestamp": candles[-1].timestamp.isoformat(),
+                "recent_trades": [],
+            }
+
+    monkeypatch.setattr(
+        "eth_backtester.dashboard_server.build_okx_live_dashboard_bundle",
+        lambda args: (
+            candles,
+            DummySnapshot(),
+            {
+                "latest_price": candles[-1].close,
+                "latest_price_ts": candles[-1].timestamp.isoformat(),
+                "latest_candle_close": candles[-1].close,
+                "status": "connected",
+                "last_error": None,
+                "transport": "okx_ws_public",
+            },
+        ),
+    )
+
+    args = build_dashboard_args(["--no-browser", "--port", "0"])
+    server, url, _thread = start_dashboard_server(args)
+    try:
+        from urllib.request import urlopen
+
+        with urlopen(f"{url}api/dashboard-stream", timeout=5) as response:
+            event_line = response.readline().decode("utf-8")
+            data_line = response.readline().decode("utf-8")
+        assert event_line.strip() == "event: dashboard"
+        assert '"status": "connected"' in data_line
+        assert '"transport": "okx_ws_public"' in data_line
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -146,7 +146,7 @@ function buildMarkers(trades) {
   return trades.map((trade) => ({
     time: toUnixSeconds(trade.timestamp),
     position: trade.side === 'buy' ? 'belowBar' : 'aboveBar',
-    color: trade.side === 'buy' ? '#22c55e' : '#ef4444',
+    color: trade.side === 'buy' ? '#ef4444' : '#22c55e',
     shape: trade.side === 'buy' ? 'arrowUp' : 'arrowDown',
     text: trade.side === 'buy' ? '买入' : '卖出',
   }));
@@ -185,7 +185,7 @@ function setupCharts() {
   state.macdChartObj = LightweightCharts.createChart(dom.macdChart, { ...chartTheme, height: dom.macdChart.clientHeight });
 
   state.candleSeries = state.priceChartObj.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor: '#22c55e', downColor: '#ef4444', borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444'
+    upColor: '#ef4444', downColor: '#22c55e', borderVisible: false, wickUpColor: '#ef4444', wickDownColor: '#22c55e'
   });
   state.ma5Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
   state.ma10Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
@@ -286,7 +286,7 @@ function renderCharts(payload) {
   state.macdHistSeries.setData(indicators.macd_histogram.map((value, index) => value == null ? null : ({
     time: toUnixSeconds(candleSource[index].time),
     value,
-    color: value >= 0 ? '#22c55e' : '#ef4444',
+    color: value >= 0 ? '#ef4444' : '#22c55e',
   })).filter(Boolean));
 
   if (!state.hasRenderedData || state.lastRenderedBar !== state.selectedBar) {
@@ -322,10 +322,10 @@ function updateSummary(payload) {
   dom.barSelect.value = payload.meta.bar;
   state.selectedBar = payload.meta.bar;
   dom.metaRefresh.textContent = payload.meta.stream_url ? 'SSE实时推送' : `${payload.meta.refresh_seconds}秒`;
-  dom.priceValue.textContent = `${Number(s.latest_close).toFixed(2)} USDT`;
+  const headlinePrice = realtime.latest_price == null ? s.latest_close : realtime.latest_price;
+  dom.priceValue.textContent = `${Number(headlinePrice).toFixed(2)} USDT`;
   state.latestTickIso = realtime.latest_price_ts || null;
-  startTickClock();
-  dom.priceSubvalue.textContent = `K线收盘价（北京时间）：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间（北京时间）：${formatBeijingTime(realtime.latest_price_ts, true)} | 距上一笔Tick：${formatElapsedMs(state.latestTickIso)}`;
+  dom.priceSubvalue.textContent = `K线收盘价（北京时间）：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间（北京时间）：${formatBeijingTime(realtime.latest_price_ts, true)}`;
   dom.wsStatus.textContent = mapWsStatus(realtime);
   dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
   dom.recommendValue.textContent = mapRecommendation(s.recommendation);
