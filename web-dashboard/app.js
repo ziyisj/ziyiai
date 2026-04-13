@@ -353,13 +353,17 @@ function applyIncrementalChartUpdate(payload) {
 function recordRenderedChartState(payload) {
   const candles = payload.candles || [];
   const previousCount = state.lastCandleCount;
+  const previousLastTime = state.lastCandleTime;
+  const nextLastTime = candles.length ? candles[candles.length - 1].time : null;
   state.hasRenderedData = true;
   state.lastRenderedBar = state.selectedBar;
   state.lastChartSignature = buildChartSignature(payload);
   state.lastCandleCount = candles.length;
-  state.lastCandleTime = candles.length ? candles[candles.length - 1].time : null;
+  state.lastCandleTime = nextLastTime;
   dom.chartRange.textContent = candles.length ? `${formatBeijingTime(candles[0].time)} -> ${formatBeijingTime(candles[candles.length - 1].time)}` : '等待数据';
-  if (previousCount && candles.length > previousCount && Date.now() >= state.interactingUntil) {
+  const hasNewBar = !!previousLastTime && !!nextLastTime && previousLastTime !== nextLastTime;
+  const hasExtendedWindow = previousCount && candles.length > previousCount;
+  if ((hasNewBar || hasExtendedWindow) && Date.now() >= state.interactingUntil) {
     state.priceChartObj.timeScale().scrollToRealTime();
     state.rsiChartObj.timeScale().scrollToRealTime();
     state.macdChartObj.timeScale().scrollToRealTime();

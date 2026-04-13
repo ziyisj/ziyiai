@@ -195,7 +195,7 @@ def build_okx_live_dashboard_bundle(args: Namespace) -> tuple[list[Candle], Sign
     latest_price_ts = market_state.get("latest_price_ts")
     chart_candles = candles
     if args.okx_bar != "1m":
-        one_minute_limit = max(args.okx_candles * _bar_multiplier(args.okx_bar), 120)
+        one_minute_limit = min(max(_bar_multiplier(args.okx_bar) * 3, 30), 240)
         one_minute_feed = _get_feed(args.okx_inst_id, "1m", one_minute_limit)
         one_minute_state = one_minute_feed.snapshot()
         chart_candles = _overlay_current_bar_from_1m(candles, one_minute_state.get("candles") or [], args.okx_bar, args.okx_candles)
