@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from .indicators import (
@@ -470,6 +473,63 @@ class MultiTimeframe15mStrategy:
         return signals
 
 
+BUILTIN_STRATEGY_LABELS = {
+    "ma_cross": "均线交叉",
+    "rsi": "RSI均值回归",
+    "macd": "MACD策略",
+    "breakout": "突破策略",
+    "okx_15m_intraday": "ETH日内",
+    "okx_15m_mtf": "ETH测试",
+}
+
+
+def get_strategy_plugin_dir() -> Path:
+    env_value = os.environ.get("ETH_STRATEGY_PLUGIN_DIR")
+    if env_value:
+        return Path(env_value).expanduser().resolve()
+    return Path(__file__).resolve().parents[2] / "uploaded-strategies"
+
+
+def _load_plugin_modules() -> dict[str, dict]:
+    plugin_dir = get_strategy_plugin_dir()
+    if not plugin_dir.exists():
+        return {}
+    registry: dict[str, dict] = {}
+    for path in sorted(plugin_dir.glob("*.py")):
+        module_name = f"eth_uploaded_strategy_{path.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        strategy_name = getattr(module, "STRATEGY_NAME", path.stem).lower()
+        build_fn = getattr(module, "build_strategy", None)
+        if not callable(build_fn):
+            continue
+        registry[strategy_name] = {
+            "name": strategy_name,
+            "label": getattr(module, "STRATEGY_LABEL", strategy_name),
+            "builder": build_fn,
+            "path": str(path),
+            "source": "plugin",
+        }
+    return registry
+
+
+def strategy_choices() -> list[dict]:
+    items = [{"name": name, "label": BUILTIN_STRATEGY_LABELS.get(name, name), "source": "builtin"} for name in BUILTIN_STRATEGY_LABELS]
+    for plugin in _load_plugin_modules().values():
+        items.append({"name": plugin["name"], "label": plugin["label"], "source": plugin["source"]})
+    return items
+
+
+def strategy_display_name(name: str) -> str:
+    for item in strategy_choices():
+        if item["name"] == name:
+            return item["label"]
+    return name
+
+
 def build_strategy(name: str, args: object | None = None) -> Strategy:
     strategy_name = name.lower()
     args = args or object()
@@ -526,8 +586,12 @@ def build_strategy(name: str, args: object | None = None) -> Strategy:
             session_end_hour=getattr(args, "session_end_hour", 22),
             cooldown_candles=getattr(args, "intraday_cooldown_candles", 2),
         )
+    plugins = _load_plugin_modules()
+    plugin = plugins.get(strategy_name)
+    if plugin is not None:
+        return plugin["builder"](args)
     raise ValueError(f"Unknown strategy: {name}")
 
 
 def available_strategies() -> list[str]:
-    return ["ma_cross", "rsi", "macd", "breakout", "okx_15m_intraday", "okx_15m_mtf"]
+    return [item["name"] for item in strategy_choices()]

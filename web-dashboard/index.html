@@ -23,7 +23,11 @@
         <div class="toolbar-row">
           <div class="toolbar-item grow">
             <label>当前策略</label>
-            <div id="meta-strategy" class="toolbar-value">-</div>
+            <div class="toolbar-inline">
+              <select id="strategy-select" class="toolbar-value strategy-select"></select>
+              <button id="import-strategy-btn" class="secondary-btn">导入策略</button>
+              <input id="strategy-file-input" type="file" accept=".py" class="hidden" />
+            </div>
           </div>
           <div class="toolbar-item">
             <label>品种</label>
@@ -44,7 +48,7 @@
             </select>
           </div>
           <div class="toolbar-item">
-            <label>行情模式</label>
+            <label>连接状态</label>
             <div id="meta-refresh" class="toolbar-value">实时推送</div>
           </div>
           <button id="refresh-btn" class="primary-btn">立即刷新</button>
@@ -57,16 +61,17 @@
           <strong id="price-value">-</strong>
           <div id="price-subvalue" class="metric-subvalue muted">K线收盘价：-</div>
         </div>
-        <div class="card metric"><span>连接状态</span><strong id="ws-status">-</strong></div>
-        <div class="card metric"><span>交易信号</span><strong id="signal-value">-</strong></div>
-        <div class="card metric"><span>建议动作</span><strong id="recommend-value">-</strong></div>
+        <div class="card metric status-metric">
+          <span>连接状态</span>
+          <strong id="ws-status" class="status-display"><span id="ws-status-dot" class="status-dot status-offline"></span><span id="ws-status-text">-</span></strong>
+        </div>
+        <div class="card metric"><span>交易建议</span><strong id="signal-value">-</strong></div>
         <div class="card metric"><span>建议方向</span><strong id="suggested-side">-</strong></div>
         <div class="card metric"><span>建议开仓价</span><strong id="suggested-entry">-</strong></div>
         <div class="card metric"><span>建议止损</span><strong id="suggested-stop-loss">-</strong></div>
         <div class="card metric"><span>建议止盈</span><strong id="suggested-take-profit">-</strong></div>
-        <div class="card metric"><span>当前行情分析</span><strong id="market-regime">-</strong></div>
-        <div class="card metric wide-metric"><span>最新K线时间（北京时间）</span><strong id="candle-time">-</strong></div>
-        <div class="card metric wide-metric"><span>图表悬浮信息</span><strong id="hover-info">将鼠标移动到图表上</strong></div>
+        <div class="card metric wide-metric"><span>行情解读</span><strong id="market-regime">-</strong></div>
+        <div class="card metric wide-metric"><span>图表中文解读</span><strong id="hover-info">将鼠标移动到图表上</strong></div>
       </section>
 
       <main class="content-grid">
@@ -92,7 +97,7 @@
               <li>红色K线：上涨，绿色K线：下跌</li>
               <li>蓝线 MA5，紫线 MA10，橙线 MA20</li>
               <li>▲ 买入点，▼ 卖出点</li>
-              <li>下方副图：RSI 与 MACD</li>
+              <li>主图K线优先按 OKX candle 数据同步</li>
             </ul>
           </section>
 
@@ -104,28 +109,6 @@
             <div class="muted" id="analysis-bias">-</div>
             <div class="muted" id="analysis-confidence">-</div>
             <p id="analysis-description" class="muted">等待分析结果</p>
-          </section>
-
-          <section class="card side-card trades-card">
-            <div class="panel-header">
-              <h2>最近成交</h2>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>方向</th>
-                    <th>价格</th>
-                    <th>数量</th>
-                    <th>原因</th>
-                  </tr>
-                </thead>
-                <tbody id="trades-body">
-                  <tr><td colspan="5" class="muted center">等待数据</td></tr>
-                </tbody>
-              </table>
-            </div>
           </section>
         </aside>
       </main>

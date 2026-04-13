@@ -61,6 +61,8 @@ body {
   padding: 10px 12px;
 }
 .toolbar-item.grow { flex: 1 1 240px; }
+.toolbar-inline { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.strategy-select { min-width: 220px; }
 .toolbar-item label, .metric span, .muted { color: var(--muted); font-size: 12px; }
 .toolbar-value { margin-top: 6px; font-size: 15px; font-weight: 700; }
 .primary-btn,
@@ -115,6 +117,10 @@ body {
   word-break: break-word;
 }
 .metric-subvalue { margin-top: 6px; line-height: 1.45; }
+.status-display { display: inline-flex; align-items: center; gap: 8px; }
+.status-dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+.status-online { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.55); }
+.status-offline { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.55); }
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.95fr) minmax(330px, 0.95fr);
@@ -143,7 +149,7 @@ body {
 }
 .side-panel {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto 1fr;
   gap: 12px;
 }
 .side-card { padding: 12px; overflow: hidden; }
@@ -159,15 +165,6 @@ body {
   color: var(--muted);
   line-height: 1.8;
 }
-.button-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-}
-.table-wrap { overflow: auto; max-height: 250px; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
 .center { text-align: center; }
 .buy-text { color: var(--green); }
 .sell-text { color: var(--red); }

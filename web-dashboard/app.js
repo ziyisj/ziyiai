@@ -4,10 +4,9 @@ const state = {
   refreshSeconds: 1,
   chartReady: false,
   selectedBar: '15m',
+  selectedStrategy: 'okx_15m_mtf',
   eventSource: null,
   timerId: null,
-  tickClockTimerId: null,
-  latestTickIso: null,
   hasRenderedData: false,
   lastRenderedBar: null,
   lastChartSignature: null,
@@ -20,22 +19,23 @@ const state = {
 const dom = {
   badge: document.getElementById('signal-badge'),
   lastUpdate: document.getElementById('last-update'),
-  metaStrategy: document.getElementById('meta-strategy'),
+  strategySelect: document.getElementById('strategy-select'),
+  importStrategyBtn: document.getElementById('import-strategy-btn'),
+  strategyFileInput: document.getElementById('strategy-file-input'),
   metaInstrument: document.getElementById('meta-instrument'),
   barSelect: document.getElementById('bar-select'),
   metaRefresh: document.getElementById('meta-refresh'),
   refreshBtn: document.getElementById('refresh-btn'),
   priceValue: document.getElementById('price-value'),
   priceSubvalue: document.getElementById('price-subvalue'),
-  wsStatus: document.getElementById('ws-status'),
+  wsStatusText: document.getElementById('ws-status-text'),
+  wsStatusDot: document.getElementById('ws-status-dot'),
   signalValue: document.getElementById('signal-value'),
-  recommendValue: document.getElementById('recommend-value'),
   suggestedSide: document.getElementById('suggested-side'),
   suggestedEntry: document.getElementById('suggested-entry'),
   suggestedStopLoss: document.getElementById('suggested-stop-loss'),
   suggestedTakeProfit: document.getElementById('suggested-take-profit'),
   marketRegime: document.getElementById('market-regime'),
-  candleTime: document.getElementById('candle-time'),
   hoverInfo: document.getElementById('hover-info'),
   chartRange: document.getElementById('chart-range'),
   quickHint: document.getElementById('quick-hint'),
@@ -43,7 +43,6 @@ const dom = {
   analysisBias: document.getElementById('analysis-bias'),
   analysisConfidence: document.getElementById('analysis-confidence'),
   analysisDescription: document.getElementById('analysis-description'),
-  tradesBody: document.getElementById('trades-body'),
   priceChart: document.getElementById('price-chart'),
   rsiChart: document.getElementById('rsi-chart'),
   macdChart: document.getElementById('macd-chart'),
@@ -68,11 +67,19 @@ const chartTheme = {
   handleScale: { axisPressedMouseMove: true, pinch: true, mouseWheel: true },
 };
 
-function formatBeijingTime(iso, withMillis = false) {
+function parseIsoAsUtc(iso) {
+  if (!iso) return null;
+  if (iso.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(iso)) {
+    return new Date(iso);
+  }
+  return new Date(`${iso}Z`);
+}
+
+function formatBeijingTime(iso) {
   if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const options = {
+  const date = parseIsoAsUtc(iso);
+  if (!date || Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat('zh-CN', {
     timeZone: SHANGHAI_TIME_ZONE,
     hour12: false,
     year: 'numeric',
@@ -81,65 +88,36 @@ function formatBeijingTime(iso, withMillis = false) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  };
-  if (withMillis) options.fractionalSecondDigits = 3;
-  return new Intl.DateTimeFormat('zh-CN', options).format(date).replaceAll('/', '-');
+  }).format(date).replaceAll('/', '-');
 }
 
 function toUnixSeconds(iso) {
-  return Math.floor(new Date(iso).getTime() / 1000);
-}
-
-function formatElapsedMs(iso) {
-  if (!iso) return '-';
-  const elapsed = Math.max(0, Date.now() - new Date(iso).getTime());
-  return `${elapsed.toFixed(0)}ms`;
-}
-
-function startTickClock() {
-  if (state.tickClockTimerId) return;
-  state.tickClockTimerId = window.setInterval(() => {
-    if (!state.latestTickIso) return;
-    const currentText = dom.priceSubvalue.textContent || '';
-    const parts = currentText.split(' | 距上一笔Tick：');
-    if (parts.length === 0) return;
-    dom.priceSubvalue.textContent = `${parts[0]} | 距上一笔Tick：${formatElapsedMs(state.latestTickIso)}`;
-  }, 50);
-}
-
-function mapSignal(action, reason) {
-  const label = ({ buy: '买入', sell: '卖出', hold: '观望' })[action] || action;
-  return reason ? `${label} / ${reason}` : label;
+  const date = parseIsoAsUtc(iso);
+  return Math.floor(date.getTime() / 1000);
 }
 
 function mapRecommendation(value) {
-  return ({ enter_long: '建议开多', exit_long: '建议平仓', hold_long: '继续持有', stand_aside: '继续观望' })[value] || value;
-}
-
-function mapWsStatus(realtime) {
-  if (!realtime) return '-';
-  const statusMap = {
-    connected: '已连接',
-    connecting: '连接中',
-    disconnected: '未连接',
-    error: '异常',
-  };
-  const label = statusMap[realtime.status] || realtime.status || '未知';
-  return realtime.last_error ? `${label} / ${realtime.last_error}` : label;
+  return ({ enter_long: '建议开多', exit_long: '建议平仓', hold_long: '继续持有', stand_aside: '继续观望' })[value] || '继续观望';
 }
 
 function setBadge(snapshot) {
   dom.badge.classList.remove('buy', 'sell', 'idle');
-  if (snapshot.latest_signal_action === 'buy' || snapshot.recommendation === 'enter_long') {
-    dom.badge.textContent = '买入信号';
+  const text = mapRecommendation(snapshot.recommendation);
+  dom.badge.textContent = text;
+  if (snapshot.recommendation === 'enter_long') {
     dom.badge.classList.add('buy');
-  } else if (snapshot.latest_signal_action === 'sell' || snapshot.recommendation === 'exit_long') {
-    dom.badge.textContent = '卖出信号';
+  } else if (snapshot.recommendation === 'exit_long') {
     dom.badge.classList.add('sell');
   } else {
-    dom.badge.textContent = '观望中';
     dom.badge.classList.add('idle');
   }
+}
+
+function setConnectionStatus(realtime) {
+  const online = realtime && realtime.status === 'connected';
+  dom.wsStatusText.textContent = online ? '已连接' : '未连接';
+  dom.wsStatusDot.classList.toggle('status-online', online);
+  dom.wsStatusDot.classList.toggle('status-offline', !online);
 }
 
 function buildMarkers(trades) {
@@ -178,6 +156,12 @@ function flushPendingChartUpdate() {
   }
 }
 
+function explainCandle(candle, iso) {
+  const move = candle.close - candle.open;
+  const direction = move > 0 ? '上涨' : move < 0 ? '下跌' : '横盘';
+  return `${formatBeijingTime(iso)}，这根K线${direction}，开盘 ${Number(candle.open).toFixed(2)}，收盘 ${Number(candle.close).toFixed(2)}，最高 ${Number(candle.high).toFixed(2)}，最低 ${Number(candle.low).toFixed(2)}。`;
+}
+
 function setupCharts() {
   if (state.chartReady) return;
   state.priceChartObj = LightweightCharts.createChart(dom.priceChart, { ...chartTheme, height: dom.priceChart.clientHeight });
@@ -206,13 +190,12 @@ function setupCharts() {
 
   state.priceChartObj.subscribeCrosshairMove(param => {
     if (!param || !param.time || !param.seriesData) {
-      queueHoverText('将鼠标移动到图表上');
+      queueHoverText('将鼠标移动到图表上，可查看当前K线的中文解读。');
       return;
     }
     const candle = param.seriesData.get(state.candleSeries);
     if (!candle) return;
-    const time = formatBeijingTime(new Date(param.time * 1000).toISOString());
-    queueHoverText(`${time} | O ${Number(candle.open).toFixed(2)} H ${Number(candle.high).toFixed(2)} L ${Number(candle.low).toFixed(2)} C ${Number(candle.close).toFixed(2)}`);
+    queueHoverText(explainCandle(candle, new Date(param.time * 1000).toISOString()));
   });
 
   [dom.priceChart, dom.rsiChart, dom.macdChart].forEach((el) => {
@@ -251,7 +234,7 @@ function buildChartSignature(payload) {
   const candles = payload.candles || [];
   if (candles.length === 0) return 'empty';
   const last = candles[candles.length - 1];
-  return [payload.meta.bar, candles.length, last.time, last.open, last.high, last.low, last.close].join('|');
+  return [payload.meta.bar, payload.meta.strategy, candles.length, last.time, last.open, last.high, last.low, last.close].join('|');
 }
 
 function renderCharts(payload) {
@@ -313,64 +296,49 @@ function updateCharts(payload) {
   renderCharts(payload);
 }
 
+function renderStrategyChoices(choices, currentValue) {
+  if (!choices || choices.length === 0) return;
+  dom.strategySelect.innerHTML = choices.map(item => `<option value="${item.name}">${item.label}</option>`).join('');
+  dom.strategySelect.value = currentValue;
+}
+
 function updateSummary(payload) {
   const s = payload.snapshot;
   const realtime = payload.realtime || {};
 
-  dom.metaStrategy.textContent = payload.meta.strategy;
+  renderStrategyChoices(payload.meta.strategy_choices || [], payload.meta.strategy);
+  state.selectedStrategy = payload.meta.strategy;
   dom.metaInstrument.textContent = payload.meta.instrument;
   dom.barSelect.value = payload.meta.bar;
   state.selectedBar = payload.meta.bar;
-  dom.metaRefresh.textContent = payload.meta.stream_url ? 'SSE实时推送' : `${payload.meta.refresh_seconds}秒`;
+  dom.metaRefresh.textContent = '实时推送';
   const headlinePrice = realtime.latest_price == null ? s.latest_close : realtime.latest_price;
   dom.priceValue.textContent = `${Number(headlinePrice).toFixed(2)} USDT`;
-  state.latestTickIso = realtime.latest_price_ts || null;
-  dom.priceSubvalue.textContent = `K线收盘价（北京时间）：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间（北京时间）：${formatBeijingTime(realtime.latest_price_ts, true)}`;
-  dom.wsStatus.textContent = mapWsStatus(realtime);
-  dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
-  dom.recommendValue.textContent = mapRecommendation(s.recommendation);
+  dom.priceSubvalue.textContent = `K线收盘价（北京时间）：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间（北京时间）：${formatBeijingTime(realtime.latest_price_ts)}`;
+  setConnectionStatus(realtime);
+  dom.signalValue.textContent = mapRecommendation(s.recommendation);
   dom.suggestedSide.textContent = s.suggested_side;
   dom.suggestedEntry.textContent = `${Number(s.suggested_entry).toFixed(2)} USDT`;
   dom.suggestedStopLoss.textContent = `${Number(s.suggested_stop_loss).toFixed(2)} USDT`;
   dom.suggestedTakeProfit.textContent = `${Number(s.suggested_take_profit).toFixed(2)} USDT`;
-  dom.marketRegime.textContent = `${s.market_regime} / ${s.market_bias}`;
-  dom.candleTime.textContent = formatBeijingTime(s.latest_timestamp);
-  dom.analysisTitle.textContent = `${s.market_regime} · ${s.strategy_label}`;
+  dom.marketRegime.textContent = `${s.market_regime}，偏向 ${s.market_bias}`;
+  dom.analysisTitle.textContent = `${payload.meta.strategy_label} · ${s.market_regime}`;
   dom.analysisBias.textContent = `行情倾向：${s.market_bias} | 建议方向：${s.suggested_side}`;
   dom.analysisConfidence.textContent = `分析置信度：${(Number(s.market_confidence) * 100).toFixed(0)}% | 周期：${payload.meta.bar}`;
   dom.analysisDescription.textContent = s.strategy_description;
-  dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | ${s.market_regime} | 建议方向：${s.suggested_side} | 开仓 ${Number(s.suggested_entry).toFixed(2)} / 止损 ${Number(s.suggested_stop_loss).toFixed(2)} / 止盈 ${Number(s.suggested_take_profit).toFixed(2)}`;
-  dom.lastUpdate.textContent = `上次更新：${formatBeijingTime(new Date().toISOString(), true)} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
+  dom.quickHint.textContent = `${payload.meta.strategy_label} 当前建议：${mapRecommendation(s.recommendation)}。建议方向：${s.suggested_side}，参考开仓 ${Number(s.suggested_entry).toFixed(2)}，止损 ${Number(s.suggested_stop_loss).toFixed(2)}，止盈 ${Number(s.suggested_take_profit).toFixed(2)}。`;
+  dom.lastUpdate.textContent = `上次更新：${formatBeijingTime(new Date().toISOString())}`;
   setBadge(s);
-}
-
-function updateTrades(trades) {
-  if (!trades || trades.length === 0) {
-    dom.tradesBody.innerHTML = '<tr><td colspan="5" class="muted center">暂无最近成交</td></tr>';
-    return;
-  }
-  dom.tradesBody.innerHTML = trades.map(trade => {
-    const sideClass = trade.side === 'buy' ? 'buy-text' : 'sell-text';
-    const sideLabel = trade.side === 'buy' ? '买入' : '卖出';
-    return `<tr>
-      <td>${formatBeijingTime(trade.timestamp, true)}</td>
-      <td class="${sideClass}">${sideLabel}</td>
-      <td>${Number(trade.price).toFixed(2)}</td>
-      <td>${Number(trade.quantity).toFixed(6)}</td>
-      <td>${trade.reason || ''}</td>
-    </tr>`;
-  }).join('');
 }
 
 function applyPayload(payload) {
   state.refreshSeconds = payload.meta.refresh_seconds || 1;
   updateSummary(payload);
-  updateTrades(payload.snapshot.recent_trades || []);
   updateCharts(payload);
 }
 
 async function fetchDashboard() {
-  const params = new URLSearchParams({ bar: state.selectedBar });
+  const params = new URLSearchParams({ bar: state.selectedBar, strategy: state.selectedStrategy });
   const res = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
   const payload = await res.json();
   if (!res.ok) throw new Error(payload.error || '获取数据失败');
@@ -410,7 +378,7 @@ function connectStream() {
     schedulePolling();
     return;
   }
-  const params = new URLSearchParams({ bar: state.selectedBar });
+  const params = new URLSearchParams({ bar: state.selectedBar, strategy: state.selectedStrategy });
   const stream = new EventSource(`/api/dashboard-stream?${params.toString()}`);
   state.eventSource = stream;
 
@@ -424,7 +392,7 @@ function connectStream() {
   });
 
   stream.onerror = () => {
-    dom.lastUpdate.textContent = `实时推送重连中：${formatBeijingTime(new Date().toISOString(), true)}`;
+    dom.lastUpdate.textContent = `实时推送重连中：${formatBeijingTime(new Date().toISOString())}`;
     if (!state.eventSource) return;
     closeStream();
     schedulePolling();
@@ -432,6 +400,22 @@ function connectStream() {
       if (!state.eventSource) connectStream();
     }, 1500);
   };
+}
+
+async function importStrategyFile(file) {
+  const text = await file.text();
+  const contentBase64 = btoa(unescape(encodeURIComponent(text)));
+  const res = await fetch('/api/strategy-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, content_base64: contentBase64 }),
+  });
+  const payload = await res.json();
+  if (!res.ok || !payload.ok) {
+    throw new Error(payload.error || '策略导入失败');
+  }
+  renderStrategyChoices(payload.strategies || [], state.selectedStrategy);
+  return payload;
 }
 
 async function bootstrapRealtime() {
@@ -462,13 +446,41 @@ dom.barSelect.addEventListener('change', () => {
   bootstrapRealtime();
 });
 
+dom.strategySelect.addEventListener('change', () => {
+  state.selectedStrategy = dom.strategySelect.value;
+  state.hasRenderedData = false;
+  state.lastChartSignature = null;
+  bootstrapRealtime();
+});
+
+dom.importStrategyBtn.addEventListener('click', () => {
+  dom.strategyFileInput.click();
+});
+
+dom.strategyFileInput.addEventListener('change', async () => {
+  const file = dom.strategyFileInput.files && dom.strategyFileInput.files[0];
+  if (!file) return;
+  try {
+    dom.lastUpdate.textContent = '正在导入策略...';
+    const payload = await importStrategyFile(file);
+    const newest = payload.strategies[payload.strategies.length - 1];
+    if (newest) {
+      state.selectedStrategy = newest.name;
+      dom.strategySelect.value = newest.name;
+    }
+    await fetchDashboard();
+    connectStream();
+    dom.lastUpdate.textContent = payload.message;
+  } catch (err) {
+    dom.lastUpdate.textContent = `策略导入失败：${err.message}`;
+  } finally {
+    dom.strategyFileInput.value = '';
+  }
+});
+
 window.addEventListener('beforeunload', () => {
   closeStream();
   stopPolling();
-  if (state.tickClockTimerId) {
-    window.clearInterval(state.tickClockTimerId);
-    state.tickClockTimerId = null;
-  }
 });
 
 setupCharts();

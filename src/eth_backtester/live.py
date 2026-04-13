@@ -39,22 +39,6 @@ def _build_snapshot_from_candles(args: Namespace, candles: list[Candle]) -> Sign
     )
 
 
-def _merge_latest_price_into_candles(candles: list[Candle], latest_price: float | None) -> list[Candle]:
-    if not candles or latest_price is None:
-        return candles
-    last_candle = candles[-1]
-    merged_last = Candle(
-        timestamp=last_candle.timestamp,
-        open=last_candle.open,
-        high=max(last_candle.high, latest_price),
-        low=min(last_candle.low, latest_price),
-        close=latest_price,
-        volume=last_candle.volume,
-    )
-    return [*candles[:-1], merged_last]
-
-
-
 def get_okx_realtime_feed(args: Namespace) -> OKXPublicRealtimeFeed:
     key = (args.okx_inst_id, args.okx_bar, args.okx_candles)
     with _FEEDS_LOCK:
@@ -63,7 +47,6 @@ def get_okx_realtime_feed(args: Namespace) -> OKXPublicRealtimeFeed:
             feed = OKXPublicRealtimeFeed(inst_id=args.okx_inst_id, bar=args.okx_bar, candles_limit=args.okx_candles)
             _FEEDS[key] = feed
         return feed
-
 
 
 def build_okx_live_dashboard_bundle(args: Namespace) -> tuple[list[Candle], SignalSnapshot, dict]:
@@ -82,26 +65,23 @@ def build_okx_live_dashboard_bundle(args: Namespace) -> tuple[list[Candle], Sign
             "status": "fallback_rest",
             "transport": "okx_rest_seed",
         }
+    snapshot = _build_snapshot_from_candles(args, candles)
     latest_price = market_state.get("latest_price")
     latest_price_ts = market_state.get("latest_price_ts")
-    live_candles = _merge_latest_price_into_candles(candles, latest_price)
-    snapshot = _build_snapshot_from_candles(args, live_candles)
     realtime = {
-        "latest_price": live_candles[-1].close,
+        "latest_price": candles[-1].close if latest_price is None else latest_price,
         "latest_price_ts": candles[-1].timestamp.isoformat() if latest_price_ts is None else latest_price_ts,
         "latest_candle_close": candles[-1].close,
         "status": market_state.get("status") or "unknown",
         "last_error": market_state.get("last_error"),
-        "transport": market_state.get("transport") or "okx_ws_public",
+        "transport": "okx_ws_public",
     }
-    return live_candles, snapshot, realtime
-
+    return candles, snapshot, realtime
 
 
 def build_okx_live_snapshot_bundle(args: Namespace) -> tuple[list[Candle], SignalSnapshot]:
     candles, snapshot, _realtime = build_okx_live_dashboard_bundle(args)
     return candles, snapshot
-
 
 
 def build_okx_live_signal_snapshot(args: Namespace) -> SignalSnapshot:

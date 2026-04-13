@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 from eth_backtester.backtest import BacktestConfig, BacktestEngine
 from eth_backtester.cli import (
@@ -37,6 +39,8 @@ from eth_backtester.strategy import (
     OKX15mIntradayStrategy,
     RSIMeanReversionStrategy,
     available_strategies,
+    build_strategy,
+    strategy_display_name,
 )
 
 
@@ -596,6 +600,78 @@ def test_walk_forward_requires_enough_candles(tmp_path: Path) -> None:
         raise AssertionError("expected ValueError for insufficient candles")
     except ValueError as exc:
         assert "not enough candles" in str(exc)
+
+
+
+def test_strategy_plugin_can_be_loaded_from_upload_dir(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "uploaded-strategies"
+    plugin_dir.mkdir(parents=True)
+    plugin_path = plugin_dir / "eth_test_plugin.py"
+    plugin_path.write_text(
+        "from dataclasses import dataclass\n"
+        "from eth_backtester.models import Signal\n"
+        "STRATEGY_NAME = 'eth_uploaded'\n"
+        "STRATEGY_LABEL = 'ETH上传策略'\n"
+        "@dataclass(frozen=True)\n"
+        "class UploadedStrategy:\n"
+        "    name: str = 'eth_uploaded'\n"
+        "    def generate_signals(self, candles):\n"
+        "        return [Signal(timestamp=c.timestamp, action='hold', reason='plugin') for c in candles]\n"
+        "def build_strategy(args):\n"
+        "    return UploadedStrategy()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ETH_STRATEGY_PLUGIN_DIR", str(plugin_dir))
+
+    names = available_strategies()
+    strategy = build_strategy("eth_uploaded")
+
+    assert "eth_uploaded" in names
+    assert strategy.name == "eth_uploaded"
+    assert strategy_display_name("eth_uploaded") == "ETH上传策略"
+
+
+
+def test_dashboard_strategy_import_endpoint_writes_plugin(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "uploaded-strategies"
+    monkeypatch.setenv("ETH_STRATEGY_PLUGIN_DIR", str(plugin_dir))
+    args = build_dashboard_args(["--no-browser", "--port", "0"])
+    server, url, _thread = start_dashboard_server(args)
+    try:
+        plugin_code = (
+            "from dataclasses import dataclass\n"
+            "from eth_backtester.models import Signal\n"
+            "STRATEGY_NAME = 'eth_imported'\n"
+            "STRATEGY_LABEL = 'ETH导入策略'\n"
+            "@dataclass(frozen=True)\n"
+            "class ImportedStrategy:\n"
+            "    name: str = 'eth_imported'\n"
+            "    def generate_signals(self, candles):\n"
+            "        return [Signal(timestamp=c.timestamp, action='hold', reason='imported') for c in candles]\n"
+            "def build_strategy(args):\n"
+            "    return ImportedStrategy()\n"
+        )
+        body = json.dumps(
+            {
+                "filename": "eth_imported.py",
+                "content_base64": base64.b64encode(plugin_code.encode("utf-8")).decode("utf-8"),
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"{url}api/strategy-import",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=5) as response:
+            payload = json.load(response)
+        assert payload["ok"] is True
+        assert (plugin_dir / "eth_imported.py").exists()
+        assert any(item["name"] == "eth_imported" for item in payload["strategies"])
+    finally:
+        server.shutdown()
+        server.server_close()
+
 
 
 def test_create_dashboard_server_uses_dynamic_port_without_opening_browser() -> None:
