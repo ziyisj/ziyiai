@@ -26,6 +26,9 @@ class OKXPublicRealtimeFeed:
         self._latest_price_ts: str | None = None
         self._status = "connecting"
         self._last_error: str | None = None
+        self._last_ws_message_monotonic = 0.0
+        self._last_rest_refresh_monotonic = 0.0
+        self._stale_refresh_inflight = False
         self._seed_candles()
         self._thread = threading.Thread(target=self._run_loop, name=f"okx-ws-{inst_id}-{bar}", daemon=True)
         self._thread.start()
@@ -38,11 +41,19 @@ class OKXPublicRealtimeFeed:
 
     def _refresh_candles_from_rest(self, status_on_success: str, error_prefix: str) -> None:
         try:
+            attempt_started_at = time.monotonic()
+            with self._lock:
+                self._last_rest_refresh_monotonic = attempt_started_at
             candles = fetch_eth_ohlcv_from_okx(inst_id=self.inst_id, bar=self.bar, candles_limit=self.candles_limit)
+            refreshed_at = time.monotonic()
             with self._lock:
                 self._candles = candles
                 self._status = status_on_success
                 self._last_error = None
+                self._last_rest_refresh_monotonic = refreshed_at
+                if candles:
+                    self._latest_price = candles[-1].close
+                    self._latest_price_ts = candles[-1].timestamp.isoformat()
         except Exception as exc:
             with self._lock:
                 self._status = "error"
@@ -77,6 +88,7 @@ class OKXPublicRealtimeFeed:
             }
             await websocket.send(json.dumps(subscribe_payload))
             self._backfill_recent_candles()
+            self._mark_ws_activity()
             with self._lock:
                 self._status = "connected"
                 self._last_error = None
@@ -105,6 +117,7 @@ class OKXPublicRealtimeFeed:
     def _handle_ticker_update(self, rows: list[dict]) -> None:
         if not rows:
             return
+        self._mark_ws_activity()
         row = rows[0]
         last = row.get("last")
         if last in {None, ""}:
@@ -134,6 +147,7 @@ class OKXPublicRealtimeFeed:
             )
         if not parsed_rows:
             return
+        self._mark_ws_activity()
 
         latest_cached_ts = None
         with self._lock:
@@ -158,6 +172,7 @@ class OKXPublicRealtimeFeed:
             self._status = "connected"
 
     def snapshot(self) -> dict:
+        self._refresh_if_ws_stale()
         with self._lock:
             candles = list(self._candles)
             latest_price = self._latest_price
@@ -176,6 +191,50 @@ class OKXPublicRealtimeFeed:
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _mark_ws_activity(self) -> None:
+        with self._lock:
+            self._last_ws_message_monotonic = time.monotonic()
+
+    def _refresh_if_ws_stale(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if self._status == "connecting":
+                return
+            last_ws_message_monotonic = self._last_ws_message_monotonic
+            last_rest_refresh_monotonic = self._last_rest_refresh_monotonic
+            stale_refresh_inflight = self._stale_refresh_inflight
+            stale_threshold_seconds = self._ws_stale_threshold_seconds()
+            if last_ws_message_monotonic <= 0:
+                return
+            if now - last_ws_message_monotonic < stale_threshold_seconds:
+                return
+            if stale_refresh_inflight:
+                return
+            if now - last_rest_refresh_monotonic < 5.0:
+                return
+            self._stale_refresh_inflight = True
+            self._last_rest_refresh_monotonic = now
+        self._trigger_stale_backfill()
+
+    def _trigger_stale_backfill(self) -> None:
+        thread = threading.Thread(target=self._run_stale_backfill, name=f"okx-stale-backfill-{self.inst_id}-{self.bar}", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self._stale_refresh_inflight = False
+            raise
+
+    def _run_stale_backfill(self) -> None:
+        try:
+            self._backfill_recent_candles()
+        finally:
+            with self._lock:
+                self._stale_refresh_inflight = False
+
+    def _ws_stale_threshold_seconds(self) -> float:
+        return min(max(self._bar_timedelta().total_seconds() / 2.0, 15.0), 60.0)
 
     def _bar_timedelta(self):
         if self.bar.endswith("m"):
