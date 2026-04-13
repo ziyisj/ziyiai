@@ -42,8 +42,10 @@ jobs:
       - name: Prepare versioned release assets
         shell: powershell
         run: |
-          Copy-Item "dist/ETH策略系统.exe" "dist/ETH策略系统-${env:APP_VERSION}.exe"
-          Compress-Archive -Path "dist/ETH策略系统.exe" -DestinationPath "dist/ETH策略系统-${env:APP_VERSION}.zip" -Force
+          $dashboardExe = Get-ChildItem dist -Filter *.exe | Where-Object { $_.Name -ne 'ETH_15M_Signal_Desktop.exe' } | Select-Object -First 1
+          if (-not $dashboardExe) { throw 'Dashboard exe not found in dist/' }
+          Copy-Item $dashboardExe.FullName "dist/ETH-strategy-system-${env:APP_VERSION}.exe"
+          Compress-Archive -Path $dashboardExe.FullName -DestinationPath "dist/ETH-strategy-system-${env:APP_VERSION}.zip" -Force
 
       - name: Upload desktop EXE artifact
         uses: actions/upload-artifact@v4
@@ -64,5 +66,5 @@ jobs:
           name: ETH策略系统 ${{ env.APP_VERSION }}
           generate_release_notes: true
           files: |
-            dist/ETH策略系统-${{ env.APP_VERSION }}.exe
-            dist/ETH策略系统-${{ env.APP_VERSION }}.zip
+            dist/ETH-strategy-system-${{ env.APP_VERSION }}.exe
+            dist/ETH-strategy-system-${{ env.APP_VERSION }}.zip
