@@ -47,7 +47,6 @@
             <label>行情模式</label>
             <div id="meta-refresh" class="toolbar-value">实时推送</div>
           </div>
-          <button id="okx-login-btn" class="secondary-btn">OKX 登录</button>
           <button id="refresh-btn" class="primary-btn">立即刷新</button>
         </div>
       </section>
@@ -66,9 +65,6 @@
         <div class="card metric"><span>建议止损</span><strong id="suggested-stop-loss">-</strong></div>
         <div class="card metric"><span>建议止盈</span><strong id="suggested-take-profit">-</strong></div>
         <div class="card metric"><span>当前行情分析</span><strong id="market-regime">-</strong></div>
-        <div class="card metric"><span>真实仓位</span><strong id="position-value">未授权</strong></div>
-        <div class="card metric"><span>账户权益</span><strong id="equity-value">未授权</strong></div>
-        <div class="card metric"><span>账户现金</span><strong id="cash-value">未授权</strong></div>
         <div class="card metric wide-metric"><span>最新K线时间</span><strong id="candle-time">-</strong></div>
         <div class="card metric wide-metric"><span>图表悬浮信息</span><strong id="hover-info">将鼠标移动到图表上</strong></div>
       </section>
@@ -87,17 +83,6 @@
         </section>
 
         <aside class="side-panel">
-          <section class="card side-card auth-card">
-            <div class="panel-header">
-              <h2>OKX 账户</h2>
-            </div>
-            <div id="auth-status-text" class="quick-hint">未授权 OKX</div>
-            <div id="auth-account-hint" class="muted">点击“OKX 登录”后显示真实权益、真实现金和真实仓位</div>
-            <div class="button-row">
-              <button id="okx-logout-btn" class="ghost-btn">退出 OKX</button>
-            </div>
-          </section>
-
           <section class="card side-card">
             <div class="panel-header">
               <h2>交易面板</h2>
@@ -144,37 +129,6 @@
           </section>
         </aside>
       </main>
-    </div>
-
-    <div id="auth-modal" class="modal-backdrop hidden">
-      <div class="modal-card">
-        <div class="panel-header">
-          <h2>OKX 登录授权</h2>
-          <button id="auth-close-btn" class="icon-btn">✕</button>
-        </div>
-        <div class="form-grid">
-          <label>
-            API Key
-            <input id="api-key-input" type="text" autocomplete="off" />
-          </label>
-          <label>
-            API Secret
-            <input id="api-secret-input" type="password" autocomplete="off" />
-          </label>
-          <label>
-            Passphrase
-            <input id="passphrase-input" type="password" autocomplete="off" />
-          </label>
-          <label class="checkbox-row">
-            <input id="simulated-input" type="checkbox" />
-            使用模拟盘
-          </label>
-        </div>
-        <div id="auth-error" class="auth-error muted"></div>
-        <div class="button-row">
-          <button id="auth-submit-btn" class="primary-btn">连接 OKX</button>
-        </div>
-      </div>
     </div>
 
     <script src="./vendor/lightweight-charts.standalone.production.js"></script>

@@ -11,7 +11,6 @@ const state = {
   lastChartSignature: null,
   interactingUntil: 0,
   pendingChartPayload: null,
-  auth: { connected: false, simulated: false, api_key_hint: null, account: null },
   hoverFramePending: false,
   pendingHoverText: null,
 };
@@ -24,8 +23,6 @@ const dom = {
   barSelect: document.getElementById('bar-select'),
   metaRefresh: document.getElementById('meta-refresh'),
   refreshBtn: document.getElementById('refresh-btn'),
-  okxLoginBtn: document.getElementById('okx-login-btn'),
-  okxLogoutBtn: document.getElementById('okx-logout-btn'),
   priceValue: document.getElementById('price-value'),
   priceSubvalue: document.getElementById('price-subvalue'),
   wsStatus: document.getElementById('ws-status'),
@@ -36,9 +33,6 @@ const dom = {
   suggestedStopLoss: document.getElementById('suggested-stop-loss'),
   suggestedTakeProfit: document.getElementById('suggested-take-profit'),
   marketRegime: document.getElementById('market-regime'),
-  positionValue: document.getElementById('position-value'),
-  equityValue: document.getElementById('equity-value'),
-  cashValue: document.getElementById('cash-value'),
   candleTime: document.getElementById('candle-time'),
   hoverInfo: document.getElementById('hover-info'),
   chartRange: document.getElementById('chart-range'),
@@ -51,16 +45,6 @@ const dom = {
   priceChart: document.getElementById('price-chart'),
   rsiChart: document.getElementById('rsi-chart'),
   macdChart: document.getElementById('macd-chart'),
-  authStatusText: document.getElementById('auth-status-text'),
-  authAccountHint: document.getElementById('auth-account-hint'),
-  authModal: document.getElementById('auth-modal'),
-  authCloseBtn: document.getElementById('auth-close-btn'),
-  authSubmitBtn: document.getElementById('auth-submit-btn'),
-  authError: document.getElementById('auth-error'),
-  apiKeyInput: document.getElementById('api-key-input'),
-  apiSecretInput: document.getElementById('api-secret-input'),
-  passphraseInput: document.getElementById('passphrase-input'),
-  simulatedInput: document.getElementById('simulated-input'),
 };
 
 const chartTheme = {
@@ -92,8 +76,7 @@ function formatShanghaiTime(iso, withMillis = false) {
     second: '2-digit',
   };
   if (withMillis) options.fractionalSecondDigits = 3;
-  const formatter = new Intl.DateTimeFormat('zh-CN', options);
-  return formatter.format(date).replaceAll('/', '-');
+  return new Intl.DateTimeFormat('zh-CN', options).format(date).replaceAll('/', '-');
 }
 
 function toUnixSeconds(iso) {
@@ -107,12 +90,6 @@ function mapSignal(action, reason) {
 
 function mapRecommendation(value) {
   return ({ enter_long: '建议开多', exit_long: '建议平仓', hold_long: '继续持有', stand_aside: '继续观望' })[value] || value;
-}
-
-function mapPositionLabel(account) {
-  if (!account || !account.connected) return '未授权';
-  const qty = account.current_position_qty == null ? '-' : Number(account.current_position_qty).toFixed(6);
-  return `${account.position_side_label || account.current_position_state || '空仓'} (${qty})`;
 }
 
 function mapWsStatus(realtime) {
@@ -312,32 +289,9 @@ function updateCharts(payload) {
   renderCharts(payload);
 }
 
-function updateAuthState(auth, account) {
-  state.auth = auth || state.auth;
-  const effectiveAccount = account || state.auth.account;
-  if (state.auth.connected) {
-    const modeLabel = state.auth.simulated ? '模拟盘' : '实盘';
-    dom.authStatusText.textContent = `已授权 ${modeLabel}`;
-    dom.authAccountHint.textContent = `${state.auth.api_key_hint || ''} ${effectiveAccount?.updated_at ? `| 更新时间：${formatShanghaiTime(effectiveAccount.updated_at, true)}` : ''}`.trim();
-    dom.okxLoginBtn.textContent = 'OKX 已连接';
-  } else {
-    dom.authStatusText.textContent = '未授权 OKX';
-    dom.authAccountHint.textContent = '点击“OKX 登录”后显示真实权益、真实现金和真实仓位';
-    dom.okxLoginBtn.textContent = 'OKX 登录';
-  }
-}
-
 function updateSummary(payload) {
   const s = payload.snapshot;
   const realtime = payload.realtime || {};
-  const account = payload.account || { connected: false };
-
-  updateAuthState({
-    connected: !!account.connected,
-    simulated: !!account.simulated,
-    api_key_hint: account.api_key_hint,
-    account,
-  }, account);
 
   dom.metaStrategy.textContent = payload.meta.strategy;
   dom.metaInstrument.textContent = payload.meta.instrument;
@@ -354,9 +308,6 @@ function updateSummary(payload) {
   dom.suggestedStopLoss.textContent = `${Number(s.suggested_stop_loss).toFixed(2)} USDT`;
   dom.suggestedTakeProfit.textContent = `${Number(s.suggested_take_profit).toFixed(2)} USDT`;
   dom.marketRegime.textContent = `${s.market_regime} / ${s.market_bias}`;
-  dom.positionValue.textContent = mapPositionLabel(account);
-  dom.equityValue.textContent = account.connected && account.equity != null ? `${Number(account.equity).toFixed(2)} USDT` : '未授权';
-  dom.cashValue.textContent = account.connected && account.cash != null ? `${Number(account.cash).toFixed(2)} USDT` : '未授权';
   dom.candleTime.textContent = formatShanghaiTime(s.latest_timestamp);
   dom.analysisTitle.textContent = `${s.market_regime} · ${s.strategy_label}`;
   dom.analysisBias.textContent = `行情倾向：${s.market_bias} | 建议方向：${s.suggested_side}`;
@@ -398,13 +349,6 @@ async function fetchDashboard() {
   const payload = await res.json();
   if (!res.ok) throw new Error(payload.error || '获取数据失败');
   applyPayload(payload);
-}
-
-async function fetchAuthStatus() {
-  const res = await fetch('/api/okx-auth-status', { cache: 'no-store' });
-  const payload = await res.json();
-  if (!res.ok) throw new Error(payload.error || '获取授权状态失败');
-  updateAuthState(payload, payload.account);
 }
 
 function stopPolling() {
@@ -466,7 +410,6 @@ function connectStream() {
 
 async function bootstrapRealtime() {
   try {
-    await fetchAuthStatus();
     await fetchDashboard();
     connectStream();
   } catch (err) {
@@ -474,47 +417,6 @@ async function bootstrapRealtime() {
     dom.quickHint.textContent = '数据拉取失败，请检查本地服务日志';
     schedulePolling();
   }
-}
-
-function openAuthModal() {
-  dom.authError.textContent = '';
-  dom.authModal.classList.remove('hidden');
-}
-
-function closeAuthModal() {
-  dom.authModal.classList.add('hidden');
-}
-
-async function submitAuth() {
-  dom.authError.textContent = '';
-  const payload = {
-    api_key: dom.apiKeyInput.value.trim(),
-    api_secret: dom.apiSecretInput.value.trim(),
-    passphrase: dom.passphraseInput.value.trim(),
-    simulated: dom.simulatedInput.checked,
-  };
-  const res = await fetch('/api/okx-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const result = await res.json();
-  if (!res.ok || !result.ok) {
-    throw new Error(result.error || 'OKX 登录失败');
-  }
-  dom.apiSecretInput.value = '';
-  dom.passphraseInput.value = '';
-  closeAuthModal();
-  await bootstrapRealtime();
-}
-
-async function logoutAuth() {
-  const res = await fetch('/api/okx-logout', { method: 'POST' });
-  const result = await res.json();
-  if (!res.ok || !result.ok) {
-    throw new Error(result.error || '退出 OKX 失败');
-  }
-  await bootstrapRealtime();
 }
 
 dom.refreshBtn.addEventListener('click', async () => {
@@ -532,32 +434,6 @@ dom.barSelect.addEventListener('change', () => {
   state.hasRenderedData = false;
   state.lastChartSignature = null;
   bootstrapRealtime();
-});
-
-dom.okxLoginBtn.addEventListener('click', () => {
-  if (state.auth.connected) return;
-  openAuthModal();
-});
-
-dom.okxLogoutBtn.addEventListener('click', async () => {
-  try {
-    await logoutAuth();
-  } catch (err) {
-    dom.authError.textContent = err.message;
-    openAuthModal();
-  }
-});
-
-dom.authCloseBtn.addEventListener('click', closeAuthModal);
-dom.authModal.addEventListener('click', (event) => {
-  if (event.target === dom.authModal) closeAuthModal();
-});
-dom.authSubmitBtn.addEventListener('click', async () => {
-  try {
-    await submitAuth();
-  } catch (err) {
-    dom.authError.textContent = err.message;
-  }
 });
 
 window.addEventListener('beforeunload', () => {
