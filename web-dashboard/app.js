@@ -17,6 +17,7 @@ const state = {
   pendingChartPayload: null,
   hoverFramePending: false,
   pendingHoverText: null,
+  lastResumeSyncAt: 0,
 };
 
 const dom = {
@@ -557,6 +558,18 @@ async function bootstrapRealtime() {
   }
 }
 
+async function refreshAfterResume() {
+  const now = Date.now();
+  if (now - state.lastResumeSyncAt < 1500) return;
+  state.lastResumeSyncAt = now;
+  try {
+    await fetchDashboard();
+  } catch (err) {
+    dom.lastUpdate.textContent = `恢复同步失败：${err.message}`;
+  }
+  connectStream();
+}
+
 dom.refreshBtn.addEventListener('click', async () => {
   stopPolling();
   try {
@@ -615,6 +628,20 @@ dom.strategyFileInput.addEventListener('change', async () => {
 window.addEventListener('beforeunload', () => {
   closeStream();
   stopPolling();
+});
+
+window.addEventListener('focus', () => {
+  refreshAfterResume();
+});
+
+window.addEventListener('pageshow', () => {
+  refreshAfterResume();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    refreshAfterResume();
+  }
 });
 
 setupCharts();

@@ -4,7 +4,7 @@ import asyncio
 import json
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import websockets
 
@@ -31,16 +31,22 @@ class OKXPublicRealtimeFeed:
         self._thread.start()
 
     def _seed_candles(self) -> None:
+        self._refresh_candles_from_rest(status_on_success="connecting", error_prefix="REST seed failed")
+
+    def _backfill_recent_candles(self) -> None:
+        self._refresh_candles_from_rest(status_on_success="connected", error_prefix="REST backfill failed")
+
+    def _refresh_candles_from_rest(self, status_on_success: str, error_prefix: str) -> None:
         try:
             candles = fetch_eth_ohlcv_from_okx(inst_id=self.inst_id, bar=self.bar, candles_limit=self.candles_limit)
             with self._lock:
                 self._candles = candles
-                self._status = "connecting"
+                self._status = status_on_success
                 self._last_error = None
         except Exception as exc:
             with self._lock:
                 self._status = "error"
-                self._last_error = f"REST seed failed: {exc}"
+                self._last_error = f"{error_prefix}: {exc}"
 
     def _run_loop(self) -> None:
         asyncio.run(self._runner())
@@ -70,6 +76,7 @@ class OKXPublicRealtimeFeed:
                 ],
             }
             await websocket.send(json.dumps(subscribe_payload))
+            self._backfill_recent_candles()
             with self._lock:
                 self._status = "connected"
                 self._last_error = None
@@ -128,6 +135,17 @@ class OKXPublicRealtimeFeed:
         if not parsed_rows:
             return
 
+        latest_cached_ts = None
+        with self._lock:
+            if self._candles:
+                latest_cached_ts = self._candles[-1].timestamp
+
+        if latest_cached_ts is not None:
+            expected_next_ts = latest_cached_ts + self._bar_timedelta()
+            has_gap = any(candle.timestamp > expected_next_ts for candle in parsed_rows)
+            if has_gap:
+                self._backfill_recent_candles()
+
         with self._lock:
             for candle in sorted(parsed_rows, key=lambda item: item.timestamp):
                 if self._candles and self._candles[-1].timestamp == candle.timestamp:
@@ -158,6 +176,15 @@ class OKXPublicRealtimeFeed:
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _bar_timedelta(self):
+        if self.bar.endswith("m"):
+            return timedelta(minutes=int(self.bar[:-1]))
+        if self.bar.endswith("H"):
+            return timedelta(hours=int(self.bar[:-1]))
+        if self.bar.endswith("D"):
+            return timedelta(days=int(self.bar[:-1]))
+        raise ValueError(f"Unsupported bar interval: {self.bar}")
 
     @staticmethod
     def _parse_okx_timestamp(timestamp_ms: str | int | None) -> datetime:
