@@ -141,7 +141,7 @@ function queueHoverText(text) {
 }
 
 function markChartInteraction() {
-  state.interactingUntil = Date.now() + 900;
+  state.interactingUntil = Date.now() + 350;
 }
 
 function flushPendingChartUpdate() {
@@ -202,7 +202,7 @@ function setupCharts() {
     ['pointerdown', 'wheel', 'touchstart'].forEach((eventName) => {
       el.addEventListener(eventName, () => {
         markChartInteraction();
-        window.setTimeout(flushPendingChartUpdate, 1000);
+        window.setTimeout(flushPendingChartUpdate, 350);
       }, { passive: true });
     });
   });
