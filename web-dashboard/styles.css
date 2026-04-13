@@ -129,6 +129,22 @@ body {
   align-items: flex-start;
 }
 .panel-header h2 { margin: 0; font-size: 17px; }
+.chart-hover-banner {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(22, 31, 47, 0.82);
+}
+.chart-hover-label {
+  display: block;
+  margin-bottom: 6px;
+}
+.chart-hover-text {
+  line-height: 1.7;
+  color: var(--text);
+  min-height: 24px;
+}
 .chart { width: 100%; }
 .price-chart { height: 500px; }
 .indicator-chart { height: 200px; margin-top: 10px; }
@@ -198,18 +214,6 @@ body {
   line-height: 1.6;
   margin-bottom: 10px;
   color: #dbeafe;
-}
-.analysis-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 14px 0 12px;
-}
-.side-note-title {
-  margin-bottom: 8px;
-}
-.hover-panel-text {
-  line-height: 1.8;
-  color: var(--text);
 }
 .quick-hint {
   font-size: 15px;

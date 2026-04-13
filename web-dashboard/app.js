@@ -10,6 +10,9 @@ const state = {
   hasRenderedData: false,
   lastRenderedBar: null,
   lastChartSignature: null,
+  lastCandleCount: 0,
+  lastCandleTime: null,
+  lastMarkersSignature: null,
   interactingUntil: 0,
   pendingChartPayload: null,
   hoverFramePending: false,
@@ -141,12 +144,12 @@ function queueHoverText(text) {
 }
 
 function markChartInteraction() {
-  state.interactingUntil = Date.now() + 350;
+  state.interactingUntil = Date.now() + 160;
 }
 
 function flushPendingChartUpdate() {
   if (Date.now() < state.interactingUntil) {
-    window.setTimeout(flushPendingChartUpdate, 120);
+    window.setTimeout(flushPendingChartUpdate, 60);
     return;
   }
   if (state.pendingChartPayload) {
@@ -202,7 +205,7 @@ function setupCharts() {
     ['pointerdown', 'wheel', 'touchstart'].forEach((eventName) => {
       el.addEventListener(eventName, () => {
         markChartInteraction();
-        window.setTimeout(flushPendingChartUpdate, 350);
+        window.setTimeout(flushPendingChartUpdate, 140);
       }, { passive: true });
     });
   });
@@ -237,21 +240,106 @@ function buildChartSignature(payload) {
   return [payload.meta.bar, payload.meta.strategy, candles.length, last.time, last.open, last.high, last.low, last.close].join('|');
 }
 
+function buildMarkersSignature(trades) {
+  return (trades || []).map((trade) => `${trade.timestamp}|${trade.side}|${trade.price || ''}`).join('~');
+}
+
+function updateMarkersIfNeeded(trades) {
+  const signature = buildMarkersSignature(trades);
+  if (signature === state.lastMarkersSignature) return;
+  LightweightCharts.createSeriesMarkers(state.candleSeries, buildMarkers(trades || []));
+  state.lastMarkersSignature = signature;
+}
+
+function toCandlePoint(candle) {
+  return {
+    time: toUnixSeconds(candle.time),
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  };
+}
+
+function toLinePoint(candles, values, index) {
+  const value = values[index];
+  if (value == null) return null;
+  return { time: toUnixSeconds(candles[index].time), value };
+}
+
+function toHistogramPoint(candles, values, index) {
+  const value = values[index];
+  if (value == null) return null;
+  return {
+    time: toUnixSeconds(candles[index].time),
+    value,
+    color: value >= 0 ? '#ef4444' : '#22c55e',
+  };
+}
+
+function canIncrementallyUpdate(payload) {
+  if (!state.hasRenderedData || state.lastRenderedBar !== state.selectedBar) return false;
+  const candles = payload.candles || [];
+  if (!candles.length) return false;
+  const newCount = candles.length;
+  const newLastTime = candles[newCount - 1].time;
+  if (newCount === state.lastCandleCount && newLastTime === state.lastCandleTime) return true;
+  if (newCount === state.lastCandleCount + 1) return true;
+  return false;
+}
+
+function applyIncrementalChartUpdate(payload) {
+  const candleSource = payload.candles;
+  const indicators = payload.indicators;
+  const lastIndex = candleSource.length - 1;
+
+  state.candleSeries.update(toCandlePoint(candleSource[lastIndex]));
+
+  const ma5Point = toLinePoint(candleSource, indicators.ma5, lastIndex);
+  if (ma5Point) state.ma5Series.update(ma5Point);
+  const ma10Point = toLinePoint(candleSource, indicators.ma10, lastIndex);
+  if (ma10Point) state.ma10Series.update(ma10Point);
+  const ma20Point = toLinePoint(candleSource, indicators.ma20, lastIndex);
+  if (ma20Point) state.ma20Series.update(ma20Point);
+
+  const rsiPoint = toLinePoint(candleSource, indicators.rsi14, lastIndex);
+  if (rsiPoint) state.rsiSeries.update(rsiPoint);
+  const guidePoint = { time: toUnixSeconds(candleSource[lastIndex].time), value: 70 };
+  const midGuidePoint = { time: toUnixSeconds(candleSource[lastIndex].time), value: 50 };
+  const lowGuidePoint = { time: toUnixSeconds(candleSource[lastIndex].time), value: 30 };
+  state.rsiTop.update(guidePoint);
+  state.rsiMid.update(midGuidePoint);
+  state.rsiLow.update(lowGuidePoint);
+
+  const macdPoint = toLinePoint(candleSource, indicators.macd, lastIndex);
+  if (macdPoint) state.macdSeries.update(macdPoint);
+  const macdSignalPoint = toLinePoint(candleSource, indicators.macd_signal, lastIndex);
+  if (macdSignalPoint) state.macdSignalSeries.update(macdSignalPoint);
+  const macdHistPoint = toHistogramPoint(candleSource, indicators.macd_histogram, lastIndex);
+  if (macdHistPoint) state.macdHistSeries.update(macdHistPoint);
+
+  updateMarkersIfNeeded(payload.snapshot.recent_trades || []);
+}
+
+function recordRenderedChartState(payload) {
+  const candles = payload.candles || [];
+  state.hasRenderedData = true;
+  state.lastRenderedBar = state.selectedBar;
+  state.lastChartSignature = buildChartSignature(payload);
+  state.lastCandleCount = candles.length;
+  state.lastCandleTime = candles.length ? candles[candles.length - 1].time : null;
+  dom.chartRange.textContent = candles.length ? `${formatBeijingTime(candles[0].time)} -> ${formatBeijingTime(candles[candles.length - 1].time)}` : '等待数据';
+}
+
 function renderCharts(payload) {
   if (!payload.candles || payload.candles.length === 0) return;
 
-  const candles = payload.candles.map(c => ({
-    time: toUnixSeconds(c.time),
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-  }));
+  const candles = payload.candles.map(toCandlePoint);
   const candleSource = payload.candles;
   const indicators = payload.indicators;
 
   state.candleSeries.setData(candles);
-  LightweightCharts.createSeriesMarkers(state.candleSeries, buildMarkers(payload.snapshot.recent_trades || []));
+  updateMarkersIfNeeded(payload.snapshot.recent_trades || []);
   state.ma5Series.setData(makeLineData(candleSource, indicators.ma5));
   state.ma10Series.setData(makeLineData(candleSource, indicators.ma10));
   state.ma20Series.setData(makeLineData(candleSource, indicators.ma20));
@@ -277,11 +365,7 @@ function renderCharts(payload) {
     state.rsiChartObj.timeScale().fitContent();
     state.macdChartObj.timeScale().fitContent();
   }
-  state.hasRenderedData = true;
-  state.lastRenderedBar = state.selectedBar;
-  state.lastChartSignature = buildChartSignature(payload);
-
-  dom.chartRange.textContent = `${formatBeijingTime(payload.candles[0].time)} -> ${formatBeijingTime(payload.candles[payload.candles.length - 1].time)}`;
+  recordRenderedChartState(payload);
 }
 
 function updateCharts(payload) {
@@ -291,6 +375,11 @@ function updateCharts(payload) {
   }
   if (Date.now() < state.interactingUntil) {
     state.pendingChartPayload = payload;
+    return;
+  }
+  if (canIncrementallyUpdate(payload)) {
+    applyIncrementalChartUpdate(payload);
+    recordRenderedChartState(payload);
     return;
   }
   renderCharts(payload);
@@ -443,6 +532,9 @@ dom.barSelect.addEventListener('change', () => {
   state.selectedBar = dom.barSelect.value;
   state.hasRenderedData = false;
   state.lastChartSignature = null;
+  state.lastCandleCount = 0;
+  state.lastCandleTime = null;
+  state.lastMarkersSignature = null;
   bootstrapRealtime();
 });
 
@@ -450,6 +542,9 @@ dom.strategySelect.addEventListener('change', () => {
   state.selectedStrategy = dom.strategySelect.value;
   state.hasRenderedData = false;
   state.lastChartSignature = null;
+  state.lastCandleCount = 0;
+  state.lastCandleTime = null;
+  state.lastMarkersSignature = null;
   bootstrapRealtime();
 });
 
