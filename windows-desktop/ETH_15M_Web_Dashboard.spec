@@ -10,6 +10,7 @@ app_path = project_root / "windows-desktop" / "eth_web_dashboard_launcher.py"
 presets_dir = project_root / "presets"
 tradingview_dir = project_root / "tradingview"
 web_dashboard_dir = project_root / "web-dashboard"
+icon_path = project_root / "windows-desktop" / "assets" / "eth-strategy-system.ico"
 pywebview_hiddenimports = collect_submodules("webview")
 
 block_cipher = None
@@ -22,6 +23,7 @@ a = Analysis(
         (str(presets_dir), "presets"),
         (str(tradingview_dir), "tradingview"),
         (str(web_dashboard_dir), "web-dashboard"),
+        (str(icon_path), "windows-desktop/assets"),
         (str(project_root / "README.md"), "."),
     ],
     hiddenimports=pywebview_hiddenimports,
@@ -43,7 +45,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="ETH_15M_Web_Dashboard",
+    name="ETH策略系统",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -56,4 +58,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(icon_path),
 )

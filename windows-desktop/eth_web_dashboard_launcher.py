@@ -13,7 +13,7 @@ def get_runtime_root() -> Path:
 
 
 def get_log_path() -> Path:
-    return Path.home() / "ETH_15M_Web_Dashboard.log"
+    return Path.home() / "ETH策略系统.log"
 
 
 def write_log(message: str) -> None:
@@ -28,7 +28,7 @@ SRC = ROOT / "src"
 if SRC.exists() and str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-WINDOW_TITLE = "ETH 15M 独立桌面看盘终端"
+WINDOW_TITLE = "ETH策略系统"
 
 
 def ensure_runtime_assets() -> None:

@@ -10,7 +10,7 @@ if errorlevel 1 goto :error
 
 echo.
 echo Build complete.
-echo EXE path: %cd%\dist\ETH_15M_Web_Dashboard.exe
+echo EXE path: %cd%\dist\ETH策略系统.exe
 pause
 exit /b 0
 

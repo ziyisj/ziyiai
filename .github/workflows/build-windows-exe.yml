@@ -43,5 +43,5 @@ jobs:
       - name: Upload web dashboard EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ETH_15M_Web_Dashboard
-          path: dist/ETH_15M_Web_Dashboard.exe
+          name: ETH策略系统
+          path: dist/ETH策略系统.exe
