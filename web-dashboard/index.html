@@ -8,21 +8,10 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div>
-          <h1>ETH策略系统</h1>
-          <p>OKX 实时 ETH-USDT-SWAP 行情 · 量化信号 · 独立桌面终端</p>
-        </div>
-        <div class="badge-area">
-          <div id="signal-badge" class="signal-badge idle">观望中</div>
-          <div id="last-update" class="muted">等待首次刷新</div>
-        </div>
-      </header>
-
       <section class="toolbar card">
-        <div class="toolbar-row">
+        <div class="toolbar-row toolbar-row-main">
           <div class="toolbar-item grow">
-            <label>当前策略</label>
+            <label>策略</label>
             <div class="toolbar-inline">
               <select id="strategy-select" class="toolbar-value strategy-select"></select>
               <button id="import-strategy-btn" class="secondary-btn">导入策略</button>
@@ -47,36 +36,17 @@
               <option value="1D">1D</option>
             </select>
           </div>
-          <div class="toolbar-item">
-            <label>连接状态</label>
-            <div id="meta-refresh" class="toolbar-value">实时推送</div>
+          <div class="toolbar-item toolbar-refresh">
+            <label>刷新</label>
+            <button id="refresh-btn" class="primary-btn">立即刷新</button>
+            <div id="meta-refresh" class="toolbar-meta muted">实时推送</div>
           </div>
-          <button id="refresh-btn" class="primary-btn">立即刷新</button>
         </div>
       </section>
 
-      <section class="summary-grid compact-grid">
-        <div class="card metric wide-metric">
-          <span>实时成交价</span>
-          <strong id="price-value">-</strong>
-          <div id="price-subvalue" class="metric-subvalue muted">K线收盘价：-</div>
-        </div>
-        <div class="card metric status-metric">
-          <span>连接状态</span>
-          <strong id="ws-status" class="status-display"><span id="ws-status-dot" class="status-dot status-offline"></span><span id="ws-status-text">-</span></strong>
-        </div>
-        <div class="card metric"><span>交易建议</span><strong id="signal-value">-</strong></div>
-        <div class="card metric"><span>建议方向</span><strong id="suggested-side">-</strong></div>
-        <div class="card metric"><span>建议开仓价</span><strong id="suggested-entry">-</strong></div>
-        <div class="card metric"><span>建议止损</span><strong id="suggested-stop-loss">-</strong></div>
-        <div class="card metric"><span>建议止盈</span><strong id="suggested-take-profit">-</strong></div>
-        <div class="card metric wide-metric"><span>行情解读</span><strong id="market-regime">-</strong></div>
-        <div class="card metric wide-metric"><span>图表中文解读</span><strong id="hover-info">将鼠标移动到图表上</strong></div>
-      </section>
-
-      <main class="content-grid">
+      <main class="content-grid layout-side-focus">
         <section class="chart-panel card">
-          <div class="panel-header">
+          <div class="panel-header panel-header-tight">
             <h2>行情主图</h2>
             <div id="chart-range" class="muted">等待数据</div>
           </div>
@@ -87,28 +57,66 @@
           <div id="macd-chart" class="chart indicator-chart macd-chart"></div>
         </section>
 
-        <aside class="side-panel">
-          <section class="card side-card">
-            <div class="panel-header">
-              <h2>交易面板</h2>
+        <aside class="side-panel side-panel-stacked">
+          <section class="card side-card price-card">
+            <div class="panel-header panel-header-tight">
+              <h2>实时成交价</h2>
+              <div id="last-update" class="muted">等待首次刷新</div>
             </div>
-            <div id="quick-hint" class="quick-hint">等待信号刷新</div>
-            <ul class="legend-list">
-              <li>红色K线：上涨，绿色K线：下跌</li>
-              <li>蓝线 MA5，紫线 MA10，橙线 MA20</li>
-              <li>▲ 买入点，▼ 卖出点</li>
-              <li>主图K线优先按 OKX candle 数据同步</li>
-            </ul>
+            <div id="price-value" class="headline-price">-</div>
+            <div id="price-subvalue" class="metric-subvalue muted">K线收盘价：-</div>
           </section>
 
-          <section class="card side-card">
-            <div class="panel-header">
-              <h2>行情分析</h2>
+          <section class="card side-card signal-card">
+            <div class="panel-header panel-header-tight">
+              <h2>交易建议</h2>
+              <div id="signal-badge" class="signal-badge idle">观望中</div>
             </div>
+            <div class="side-metric-grid">
+              <div class="side-metric-item">
+                <span>当前建议</span>
+                <strong id="signal-value">-</strong>
+              </div>
+              <div class="side-metric-item">
+                <span>建议方向</span>
+                <strong id="suggested-side">-</strong>
+              </div>
+              <div class="side-metric-item">
+                <span>建议开仓价</span>
+                <strong id="suggested-entry">-</strong>
+              </div>
+              <div class="side-metric-item">
+                <span>建议止损</span>
+                <strong id="suggested-stop-loss">-</strong>
+              </div>
+              <div class="side-metric-item">
+                <span>建议止盈</span>
+                <strong id="suggested-take-profit">-</strong>
+              </div>
+            </div>
+            <div id="quick-hint" class="quick-hint">等待信号刷新</div>
+          </section>
+
+          <section class="card side-card status-card">
+            <div class="panel-header panel-header-tight">
+              <h2>连接状态</h2>
+            </div>
+            <div id="ws-status" class="status-display status-display-large"><span id="ws-status-dot" class="status-dot status-offline"></span><span id="ws-status-text">-</span></div>
+            <div class="status-note muted">主图K线优先按 OKX candle 数据同步</div>
+          </section>
+
+          <section class="card side-card analysis-card">
+            <div class="panel-header panel-header-tight">
+              <h2>分析信息</h2>
+            </div>
+            <div class="analysis-keyline" id="market-regime">-</div>
             <div class="quick-hint" id="analysis-title">等待分析</div>
             <div class="muted" id="analysis-bias">-</div>
             <div class="muted" id="analysis-confidence">-</div>
             <p id="analysis-description" class="muted">等待分析结果</p>
+            <div class="analysis-divider"></div>
+            <div class="side-note-title muted">图表中文解读</div>
+            <div id="hover-info" class="hover-panel-text">将鼠标移动到图表上</div>
           </section>
         </aside>
       </main>
