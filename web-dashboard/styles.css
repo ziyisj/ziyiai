@@ -131,10 +131,10 @@ body {
 }
 .panel-header h2 { margin: 0; font-size: 17px; }
 .chart { width: 100%; }
-.price-chart { height: 360px; }
-.indicator-chart { height: 130px; margin-top: 6px; }
-.rsi-chart { min-height: 130px; }
-.macd-chart { min-height: 130px; }
+.price-chart { height: 350px; }
+.indicator-chart { height: 165px; margin-top: 8px; }
+.rsi-chart { min-height: 165px; }
+.macd-chart { min-height: 150px; }
 .subchart-title {
   font-size: 12px;
   color: var(--muted);

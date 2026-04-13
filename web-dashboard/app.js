@@ -6,6 +6,8 @@ const state = {
   selectedBar: '15m',
   eventSource: null,
   timerId: null,
+  tickClockTimerId: null,
+  latestTickIso: null,
   hasRenderedData: false,
   lastRenderedBar: null,
   lastChartSignature: null,
@@ -48,7 +50,12 @@ const dom = {
 };
 
 const chartTheme = {
-  layout: { background: { color: '#0a0f1a' }, textColor: '#d7dde7', fontFamily: 'Inter, Microsoft YaHei UI, sans-serif' },
+  layout: {
+    attributionLogo: false,
+    background: { color: '#0a0f1a' },
+    textColor: '#d7dde7',
+    fontFamily: 'Inter, Microsoft YaHei UI, sans-serif'
+  },
   grid: { vertLines: { color: '#1a2437' }, horzLines: { color: '#1a2437' } },
   rightPriceScale: { borderColor: '#24324a' },
   timeScale: { borderColor: '#24324a', timeVisible: true, secondsVisible: false },
@@ -61,7 +68,7 @@ const chartTheme = {
   handleScale: { axisPressedMouseMove: true, pinch: true, mouseWheel: true },
 };
 
-function formatShanghaiTime(iso, withMillis = false) {
+function formatBeijingTime(iso, withMillis = false) {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -81,6 +88,23 @@ function formatShanghaiTime(iso, withMillis = false) {
 
 function toUnixSeconds(iso) {
   return Math.floor(new Date(iso).getTime() / 1000);
+}
+
+function formatElapsedMs(iso) {
+  if (!iso) return '-';
+  const elapsed = Math.max(0, Date.now() - new Date(iso).getTime());
+  return `${elapsed.toFixed(0)}ms`;
+}
+
+function startTickClock() {
+  if (state.tickClockTimerId) return;
+  state.tickClockTimerId = window.setInterval(() => {
+    if (!state.latestTickIso) return;
+    const currentText = dom.priceSubvalue.textContent || '';
+    const parts = currentText.split(' | 距上一笔Tick：');
+    if (parts.length === 0) return;
+    dom.priceSubvalue.textContent = `${parts[0]} | 距上一笔Tick：${formatElapsedMs(state.latestTickIso)}`;
+  }, 50);
 }
 
 function mapSignal(action, reason) {
@@ -167,11 +191,11 @@ function setupCharts() {
   state.ma10Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
   state.ma20Series = state.priceChartObj.addSeries(LightweightCharts.LineSeries, { color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
 
-  state.rsiSeries = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  state.rsiTop = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
-  state.rsiMid = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#3b4a61', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
-  state.rsiLow = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
-  state.rsiChartObj.priceScale('right').applyOptions({ autoScale: false, scaleMargins: { top: 0.15, bottom: 0.15 } });
+  state.rsiSeries = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#e879f9', lineWidth: 3, priceLineVisible: false, lastValueVisible: true });
+  state.rsiTop = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiMid = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#64748b', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiLow = state.rsiChartObj.addSeries(LightweightCharts.LineSeries, { color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+  state.rsiChartObj.priceScale('right').applyOptions({ autoScale: true, scaleMargins: { top: 0.12, bottom: 0.12 } });
 
   state.macdSeries = state.macdChartObj.addSeries(LightweightCharts.LineSeries, { color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
   state.macdSignalSeries = state.macdChartObj.addSeries(LightweightCharts.LineSeries, { color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
@@ -187,7 +211,7 @@ function setupCharts() {
     }
     const candle = param.seriesData.get(state.candleSeries);
     if (!candle) return;
-    const time = formatShanghaiTime(new Date(param.time * 1000).toISOString());
+    const time = formatBeijingTime(new Date(param.time * 1000).toISOString());
     queueHoverText(`${time} | O ${Number(candle.open).toFixed(2)} H ${Number(candle.high).toFixed(2)} L ${Number(candle.low).toFixed(2)} C ${Number(candle.close).toFixed(2)}`);
   });
 
@@ -274,7 +298,7 @@ function renderCharts(payload) {
   state.lastRenderedBar = state.selectedBar;
   state.lastChartSignature = buildChartSignature(payload);
 
-  dom.chartRange.textContent = `${formatShanghaiTime(payload.candles[0].time)} -> ${formatShanghaiTime(payload.candles[payload.candles.length - 1].time)}`;
+  dom.chartRange.textContent = `${formatBeijingTime(payload.candles[0].time)} -> ${formatBeijingTime(payload.candles[payload.candles.length - 1].time)}`;
 }
 
 function updateCharts(payload) {
@@ -299,7 +323,9 @@ function updateSummary(payload) {
   state.selectedBar = payload.meta.bar;
   dom.metaRefresh.textContent = payload.meta.stream_url ? 'SSE实时推送' : `${payload.meta.refresh_seconds}秒`;
   dom.priceValue.textContent = `${Number(s.latest_close).toFixed(2)} USDT`;
-  dom.priceSubvalue.textContent = `K线收盘价：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间：${formatShanghaiTime(realtime.latest_price_ts, true)}`;
+  state.latestTickIso = realtime.latest_price_ts || null;
+  startTickClock();
+  dom.priceSubvalue.textContent = `K线收盘价（北京时间）：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间（北京时间）：${formatBeijingTime(realtime.latest_price_ts, true)} | 距上一笔Tick：${formatElapsedMs(state.latestTickIso)}`;
   dom.wsStatus.textContent = mapWsStatus(realtime);
   dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
   dom.recommendValue.textContent = mapRecommendation(s.recommendation);
@@ -308,13 +334,13 @@ function updateSummary(payload) {
   dom.suggestedStopLoss.textContent = `${Number(s.suggested_stop_loss).toFixed(2)} USDT`;
   dom.suggestedTakeProfit.textContent = `${Number(s.suggested_take_profit).toFixed(2)} USDT`;
   dom.marketRegime.textContent = `${s.market_regime} / ${s.market_bias}`;
-  dom.candleTime.textContent = formatShanghaiTime(s.latest_timestamp);
+  dom.candleTime.textContent = formatBeijingTime(s.latest_timestamp);
   dom.analysisTitle.textContent = `${s.market_regime} · ${s.strategy_label}`;
   dom.analysisBias.textContent = `行情倾向：${s.market_bias} | 建议方向：${s.suggested_side}`;
   dom.analysisConfidence.textContent = `分析置信度：${(Number(s.market_confidence) * 100).toFixed(0)}% | 周期：${payload.meta.bar}`;
   dom.analysisDescription.textContent = s.strategy_description;
   dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | ${s.market_regime} | 建议方向：${s.suggested_side} | 开仓 ${Number(s.suggested_entry).toFixed(2)} / 止损 ${Number(s.suggested_stop_loss).toFixed(2)} / 止盈 ${Number(s.suggested_take_profit).toFixed(2)}`;
-  dom.lastUpdate.textContent = `上次更新：${formatShanghaiTime(new Date().toISOString(), true)} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
+  dom.lastUpdate.textContent = `上次更新：${formatBeijingTime(new Date().toISOString(), true)} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
   setBadge(s);
 }
 
@@ -327,7 +353,7 @@ function updateTrades(trades) {
     const sideClass = trade.side === 'buy' ? 'buy-text' : 'sell-text';
     const sideLabel = trade.side === 'buy' ? '买入' : '卖出';
     return `<tr>
-      <td>${formatShanghaiTime(trade.timestamp, true)}</td>
+      <td>${formatBeijingTime(trade.timestamp, true)}</td>
       <td class="${sideClass}">${sideLabel}</td>
       <td>${Number(trade.price).toFixed(2)}</td>
       <td>${Number(trade.quantity).toFixed(6)}</td>
@@ -398,7 +424,7 @@ function connectStream() {
   });
 
   stream.onerror = () => {
-    dom.lastUpdate.textContent = `实时推送重连中：${formatShanghaiTime(new Date().toISOString(), true)}`;
+    dom.lastUpdate.textContent = `实时推送重连中：${formatBeijingTime(new Date().toISOString(), true)}`;
     if (!state.eventSource) return;
     closeStream();
     schedulePolling();
@@ -439,6 +465,10 @@ dom.barSelect.addEventListener('change', () => {
 window.addEventListener('beforeunload', () => {
   closeStream();
   stopPolling();
+  if (state.tickClockTimerId) {
+    window.clearInterval(state.tickClockTimerId);
+    state.tickClockTimerId = null;
+  }
 });
 
 setupCharts();

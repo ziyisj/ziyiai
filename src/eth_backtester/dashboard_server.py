@@ -118,7 +118,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(f"event: dashboard\ndata: {body}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 previous_body = body
-            time.sleep(0.5)
+            time.sleep(0.1)
 
     def _write_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
