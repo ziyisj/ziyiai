@@ -24,6 +24,7 @@ from eth_backtester.download import (
 from eth_backtester.live import build_okx_live_signal_snapshot
 from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
 from eth_backtester.market_analysis import analyze_market
+from eth_backtester.okx_private import OKXCredentials, OKXPrivateRESTClient
 from eth_backtester.okx_ws_public import OKXPublicWebSocketClient, normalize_ws_channel_for_bar
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
@@ -697,6 +698,76 @@ def test_start_dashboard_server_serves_dashboard_payload(monkeypatch) -> None:
             chunk = response.read(4096).decode("utf-8")
         assert "event: dashboard" in chunk
         assert '"snapshot": {' in chunk
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_okx_private_signing_is_stable() -> None:
+    client = OKXPrivateRESTClient(
+        OKXCredentials(api_key="key", api_secret="secret", passphrase="pass")
+    )
+    signature = client._sign(
+        "2024-01-01T00:00:00.000Z",
+        "GET",
+        "/api/v5/account/balance",
+        "",
+    )
+    assert signature == "dfI+ViVVBgfRPWcGyH3gM3bM/DTyiqUqZys/Y9UbsFQ="
+
+
+def test_dashboard_okx_login_and_logout_routes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "eth_backtester.okx_private.OKXPrivateRESTClient.fetch_account_snapshot",
+        lambda self, inst_id: {
+            "connected": True,
+            "simulated": self.credentials.simulated,
+            "equity": 12345.67,
+            "cash": 3456.78,
+            "current_position_state": "long",
+            "current_position_qty": 2.5,
+            "position_side_label": "持多",
+            "updated_at": "2026-04-12T20:50:00.000Z",
+            "api_key_hint": "abcd***wxyz",
+            "inst_id": inst_id,
+            "error": None,
+        },
+    )
+
+    args = build_dashboard_args(["--no-browser", "--port", "0"])
+    server, url, _thread = start_dashboard_server(args)
+    try:
+        from urllib.request import Request, urlopen
+
+        login_req = Request(
+            f"{url}api/okx-login",
+            data=json.dumps(
+                {
+                    "api_key": "abcd1234wxyz",
+                    "api_secret": "secret",
+                    "passphrase": "pass",
+                    "simulated": True,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(login_req, timeout=5) as response:
+            payload = json.load(response)
+        assert payload["ok"] is True
+        assert payload["account"]["equity"] == 12345.67
+        assert payload["auth"]["connected"] is True
+
+        with urlopen(f"{url}api/okx-auth-status", timeout=5) as response:
+            status = json.load(response)
+        assert status["connected"] is True
+        assert status["account"]["cash"] == 3456.78
+
+        logout_req = Request(f"{url}api/okx-logout", data=b"{}", method="POST")
+        with urlopen(logout_req, timeout=5) as response:
+            logout_payload = json.load(response)
+        assert logout_payload["ok"] is True
+        assert logout_payload["auth"]["connected"] is False
     finally:
         server.shutdown()
         server.server_close()

@@ -1,3 +1,5 @@
+const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
+
 const state = {
   refreshSeconds: 1,
   chartReady: false,
@@ -6,6 +8,12 @@ const state = {
   timerId: null,
   hasRenderedData: false,
   lastRenderedBar: null,
+  lastChartSignature: null,
+  interactingUntil: 0,
+  pendingChartPayload: null,
+  auth: { connected: false, simulated: false, api_key_hint: null, account: null },
+  hoverFramePending: false,
+  pendingHoverText: null,
 };
 
 const dom = {
@@ -16,6 +24,8 @@ const dom = {
   barSelect: document.getElementById('bar-select'),
   metaRefresh: document.getElementById('meta-refresh'),
   refreshBtn: document.getElementById('refresh-btn'),
+  okxLoginBtn: document.getElementById('okx-login-btn'),
+  okxLogoutBtn: document.getElementById('okx-logout-btn'),
   priceValue: document.getElementById('price-value'),
   priceSubvalue: document.getElementById('price-subvalue'),
   wsStatus: document.getElementById('ws-status'),
@@ -38,10 +48,19 @@ const dom = {
   analysisConfidence: document.getElementById('analysis-confidence'),
   analysisDescription: document.getElementById('analysis-description'),
   tradesBody: document.getElementById('trades-body'),
-  jsonOutput: document.getElementById('json-output'),
   priceChart: document.getElementById('price-chart'),
   rsiChart: document.getElementById('rsi-chart'),
   macdChart: document.getElementById('macd-chart'),
+  authStatusText: document.getElementById('auth-status-text'),
+  authAccountHint: document.getElementById('auth-account-hint'),
+  authModal: document.getElementById('auth-modal'),
+  authCloseBtn: document.getElementById('auth-close-btn'),
+  authSubmitBtn: document.getElementById('auth-submit-btn'),
+  authError: document.getElementById('auth-error'),
+  apiKeyInput: document.getElementById('api-key-input'),
+  apiSecretInput: document.getElementById('api-secret-input'),
+  passphraseInput: document.getElementById('passphrase-input'),
+  simulatedInput: document.getElementById('simulated-input'),
 };
 
 const chartTheme = {
@@ -54,10 +73,27 @@ const chartTheme = {
     vertLine: { color: '#6b7b93', style: LightweightCharts.LineStyle.Dashed },
     horzLine: { color: '#6b7b93', style: LightweightCharts.LineStyle.Dashed },
   },
+  handleScroll: { pressedMouseMove: true, mouseWheel: true, horzTouchDrag: true, vertTouchDrag: true },
+  handleScale: { axisPressedMouseMove: true, pinch: true, mouseWheel: true },
 };
 
-function formatTimeLabel(iso) {
-  return iso ? iso.replace('T', ' ') : '-';
+function formatShanghaiTime(iso, withMillis = false) {
+  if (!iso) return '-';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const options = {
+    timeZone: SHANGHAI_TIME_ZONE,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  };
+  if (withMillis) options.fractionalSecondDigits = 3;
+  const formatter = new Intl.DateTimeFormat('zh-CN', options);
+  return formatter.format(date).replaceAll('/', '-');
 }
 
 function toUnixSeconds(iso) {
@@ -73,8 +109,10 @@ function mapRecommendation(value) {
   return ({ enter_long: '建议开多', exit_long: '建议平仓', hold_long: '继续持有', stand_aside: '继续观望' })[value] || value;
 }
 
-function mapPosition(positionState, qty) {
-  return `${({ flat: '空仓', long: '持多' })[positionState] || positionState} (${Number(qty).toFixed(6)})`;
+function mapPositionLabel(account) {
+  if (!account || !account.connected) return '未授权';
+  const qty = account.current_position_qty == null ? '-' : Number(account.current_position_qty).toFixed(6);
+  return `${account.position_side_label || account.current_position_state || '空仓'} (${qty})`;
 }
 
 function mapWsStatus(realtime) {
@@ -113,6 +151,32 @@ function buildMarkers(trades) {
   }));
 }
 
+function queueHoverText(text) {
+  state.pendingHoverText = text;
+  if (state.hoverFramePending) return;
+  state.hoverFramePending = true;
+  window.requestAnimationFrame(() => {
+    dom.hoverInfo.textContent = state.pendingHoverText;
+    state.hoverFramePending = false;
+  });
+}
+
+function markChartInteraction() {
+  state.interactingUntil = Date.now() + 900;
+}
+
+function flushPendingChartUpdate() {
+  if (Date.now() < state.interactingUntil) {
+    window.setTimeout(flushPendingChartUpdate, 120);
+    return;
+  }
+  if (state.pendingChartPayload) {
+    const payload = state.pendingChartPayload;
+    state.pendingChartPayload = null;
+    renderCharts(payload);
+  }
+}
+
 function setupCharts() {
   if (state.chartReady) return;
   state.priceChartObj = LightweightCharts.createChart(dom.priceChart, { ...chartTheme, height: dom.priceChart.clientHeight });
@@ -141,13 +205,22 @@ function setupCharts() {
 
   state.priceChartObj.subscribeCrosshairMove(param => {
     if (!param || !param.time || !param.seriesData) {
-      dom.hoverInfo.textContent = '将鼠标移动到图表上';
+      queueHoverText('将鼠标移动到图表上');
       return;
     }
     const candle = param.seriesData.get(state.candleSeries);
     if (!candle) return;
-    const time = new Date(param.time * 1000).toISOString().slice(0, 16).replace('T', ' ');
-    dom.hoverInfo.textContent = `${time} | O ${Number(candle.open).toFixed(2)} H ${Number(candle.high).toFixed(2)} L ${Number(candle.low).toFixed(2)} C ${Number(candle.close).toFixed(2)}`;
+    const time = formatShanghaiTime(new Date(param.time * 1000).toISOString());
+    queueHoverText(`${time} | O ${Number(candle.open).toFixed(2)} H ${Number(candle.high).toFixed(2)} L ${Number(candle.low).toFixed(2)} C ${Number(candle.close).toFixed(2)}`);
+  });
+
+  [dom.priceChart, dom.rsiChart, dom.macdChart].forEach((el) => {
+    ['pointerdown', 'wheel', 'touchstart'].forEach((eventName) => {
+      el.addEventListener(eventName, () => {
+        markChartInteraction();
+        window.setTimeout(flushPendingChartUpdate, 1000);
+      }, { passive: true });
+    });
   });
 
   window.addEventListener('resize', () => {
@@ -160,8 +233,12 @@ function setupCharts() {
 }
 
 function syncCharts(sourceChart, targetChart) {
+  let syncing = false;
   sourceChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-    if (range) targetChart.timeScale().setVisibleLogicalRange(range);
+    if (!range || syncing) return;
+    syncing = true;
+    targetChart.timeScale().setVisibleLogicalRange(range);
+    window.requestAnimationFrame(() => { syncing = false; });
   });
 }
 
@@ -169,7 +246,14 @@ function makeLineData(candles, values) {
   return values.map((value, index) => value == null ? null : ({ time: toUnixSeconds(candles[index].time), value })).filter(Boolean);
 }
 
-function updateCharts(payload) {
+function buildChartSignature(payload) {
+  const candles = payload.candles || [];
+  if (candles.length === 0) return 'empty';
+  const last = candles[candles.length - 1];
+  return [payload.meta.bar, candles.length, last.time, last.open, last.high, last.low, last.close].join('|');
+}
+
+function renderCharts(payload) {
   if (!payload.candles || payload.candles.length === 0) return;
 
   const candles = payload.candles.map(c => ({
@@ -211,13 +295,49 @@ function updateCharts(payload) {
   }
   state.hasRenderedData = true;
   state.lastRenderedBar = state.selectedBar;
+  state.lastChartSignature = buildChartSignature(payload);
 
-  dom.chartRange.textContent = `${formatTimeLabel(payload.candles[0].time)} -> ${formatTimeLabel(payload.candles[payload.candles.length - 1].time)}`;
+  dom.chartRange.textContent = `${formatShanghaiTime(payload.candles[0].time)} -> ${formatShanghaiTime(payload.candles[payload.candles.length - 1].time)}`;
+}
+
+function updateCharts(payload) {
+  const signature = buildChartSignature(payload);
+  if (signature === state.lastChartSignature && state.lastRenderedBar === state.selectedBar) {
+    return;
+  }
+  if (Date.now() < state.interactingUntil) {
+    state.pendingChartPayload = payload;
+    return;
+  }
+  renderCharts(payload);
+}
+
+function updateAuthState(auth, account) {
+  state.auth = auth || state.auth;
+  const effectiveAccount = account || state.auth.account;
+  if (state.auth.connected) {
+    const modeLabel = state.auth.simulated ? '模拟盘' : '实盘';
+    dom.authStatusText.textContent = `已授权 ${modeLabel}`;
+    dom.authAccountHint.textContent = `${state.auth.api_key_hint || ''} ${effectiveAccount?.updated_at ? `| 更新时间：${formatShanghaiTime(effectiveAccount.updated_at, true)}` : ''}`.trim();
+    dom.okxLoginBtn.textContent = 'OKX 已连接';
+  } else {
+    dom.authStatusText.textContent = '未授权 OKX';
+    dom.authAccountHint.textContent = '点击“OKX 登录”后显示真实权益、真实现金和真实仓位';
+    dom.okxLoginBtn.textContent = 'OKX 登录';
+  }
 }
 
 function updateSummary(payload) {
   const s = payload.snapshot;
   const realtime = payload.realtime || {};
+  const account = payload.account || { connected: false };
+
+  updateAuthState({
+    connected: !!account.connected,
+    simulated: !!account.simulated,
+    api_key_hint: account.api_key_hint,
+    account,
+  }, account);
 
   dom.metaStrategy.textContent = payload.meta.strategy;
   dom.metaInstrument.textContent = payload.meta.instrument;
@@ -225,7 +345,7 @@ function updateSummary(payload) {
   state.selectedBar = payload.meta.bar;
   dom.metaRefresh.textContent = payload.meta.stream_url ? 'SSE实时推送' : `${payload.meta.refresh_seconds}秒`;
   dom.priceValue.textContent = `${Number(s.latest_close).toFixed(2)} USDT`;
-  dom.priceSubvalue.textContent = `K线收盘价：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间：${formatTimeLabel(realtime.latest_price_ts)}`;
+  dom.priceSubvalue.textContent = `K线收盘价：${realtime.latest_candle_close == null ? '-' : `${Number(realtime.latest_candle_close).toFixed(2)} USDT`} | Tick时间：${formatShanghaiTime(realtime.latest_price_ts, true)}`;
   dom.wsStatus.textContent = mapWsStatus(realtime);
   dom.signalValue.textContent = mapSignal(s.latest_signal_action, s.latest_signal_reason);
   dom.recommendValue.textContent = mapRecommendation(s.recommendation);
@@ -234,16 +354,16 @@ function updateSummary(payload) {
   dom.suggestedStopLoss.textContent = `${Number(s.suggested_stop_loss).toFixed(2)} USDT`;
   dom.suggestedTakeProfit.textContent = `${Number(s.suggested_take_profit).toFixed(2)} USDT`;
   dom.marketRegime.textContent = `${s.market_regime} / ${s.market_bias}`;
-  dom.positionValue.textContent = mapPosition(s.current_position_state, s.current_position_qty);
-  dom.equityValue.textContent = `${Number(s.equity).toFixed(2)} USDT`;
-  dom.cashValue.textContent = `${Number(s.cash).toFixed(2)} USDT`;
-  dom.candleTime.textContent = formatTimeLabel(s.latest_timestamp);
+  dom.positionValue.textContent = mapPositionLabel(account);
+  dom.equityValue.textContent = account.connected && account.equity != null ? `${Number(account.equity).toFixed(2)} USDT` : '未授权';
+  dom.cashValue.textContent = account.connected && account.cash != null ? `${Number(account.cash).toFixed(2)} USDT` : '未授权';
+  dom.candleTime.textContent = formatShanghaiTime(s.latest_timestamp);
   dom.analysisTitle.textContent = `${s.market_regime} · ${s.strategy_label}`;
   dom.analysisBias.textContent = `行情倾向：${s.market_bias} | 建议方向：${s.suggested_side}`;
   dom.analysisConfidence.textContent = `分析置信度：${(Number(s.market_confidence) * 100).toFixed(0)}% | 周期：${payload.meta.bar}`;
   dom.analysisDescription.textContent = s.strategy_description;
   dom.quickHint.textContent = `当前建议：${mapRecommendation(s.recommendation)} | ${s.market_regime} | 建议方向：${s.suggested_side} | 开仓 ${Number(s.suggested_entry).toFixed(2)} / 止损 ${Number(s.suggested_stop_loss).toFixed(2)} / 止盈 ${Number(s.suggested_take_profit).toFixed(2)}`;
-  dom.lastUpdate.textContent = `上次更新：${new Date().toLocaleString('zh-CN')} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
+  dom.lastUpdate.textContent = `上次更新：${formatShanghaiTime(new Date().toISOString(), true)} | ${payload.meta.stream_url ? '实时推送中' : '轮询模式'}`;
   setBadge(s);
 }
 
@@ -256,7 +376,7 @@ function updateTrades(trades) {
     const sideClass = trade.side === 'buy' ? 'buy-text' : 'sell-text';
     const sideLabel = trade.side === 'buy' ? '买入' : '卖出';
     return `<tr>
-      <td>${formatTimeLabel(trade.timestamp)}</td>
+      <td>${formatShanghaiTime(trade.timestamp, true)}</td>
       <td class="${sideClass}">${sideLabel}</td>
       <td>${Number(trade.price).toFixed(2)}</td>
       <td>${Number(trade.quantity).toFixed(6)}</td>
@@ -269,7 +389,6 @@ function applyPayload(payload) {
   state.refreshSeconds = payload.meta.refresh_seconds || 1;
   updateSummary(payload);
   updateTrades(payload.snapshot.recent_trades || []);
-  dom.jsonOutput.textContent = JSON.stringify(payload.snapshot, null, 2);
   updateCharts(payload);
 }
 
@@ -279,6 +398,13 @@ async function fetchDashboard() {
   const payload = await res.json();
   if (!res.ok) throw new Error(payload.error || '获取数据失败');
   applyPayload(payload);
+}
+
+async function fetchAuthStatus() {
+  const res = await fetch('/api/okx-auth-status', { cache: 'no-store' });
+  const payload = await res.json();
+  if (!res.ok) throw new Error(payload.error || '获取授权状态失败');
+  updateAuthState(payload, payload.account);
 }
 
 function stopPolling() {
@@ -328,7 +454,7 @@ function connectStream() {
   });
 
   stream.onerror = () => {
-    dom.lastUpdate.textContent = `实时推送重连中：${new Date().toLocaleString('zh-CN')}`;
+    dom.lastUpdate.textContent = `实时推送重连中：${formatShanghaiTime(new Date().toISOString(), true)}`;
     if (!state.eventSource) return;
     closeStream();
     schedulePolling();
@@ -340,6 +466,7 @@ function connectStream() {
 
 async function bootstrapRealtime() {
   try {
+    await fetchAuthStatus();
     await fetchDashboard();
     connectStream();
   } catch (err) {
@@ -347,6 +474,47 @@ async function bootstrapRealtime() {
     dom.quickHint.textContent = '数据拉取失败，请检查本地服务日志';
     schedulePolling();
   }
+}
+
+function openAuthModal() {
+  dom.authError.textContent = '';
+  dom.authModal.classList.remove('hidden');
+}
+
+function closeAuthModal() {
+  dom.authModal.classList.add('hidden');
+}
+
+async function submitAuth() {
+  dom.authError.textContent = '';
+  const payload = {
+    api_key: dom.apiKeyInput.value.trim(),
+    api_secret: dom.apiSecretInput.value.trim(),
+    passphrase: dom.passphraseInput.value.trim(),
+    simulated: dom.simulatedInput.checked,
+  };
+  const res = await fetch('/api/okx-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const result = await res.json();
+  if (!res.ok || !result.ok) {
+    throw new Error(result.error || 'OKX 登录失败');
+  }
+  dom.apiSecretInput.value = '';
+  dom.passphraseInput.value = '';
+  closeAuthModal();
+  await bootstrapRealtime();
+}
+
+async function logoutAuth() {
+  const res = await fetch('/api/okx-logout', { method: 'POST' });
+  const result = await res.json();
+  if (!res.ok || !result.ok) {
+    throw new Error(result.error || '退出 OKX 失败');
+  }
+  await bootstrapRealtime();
 }
 
 dom.refreshBtn.addEventListener('click', async () => {
@@ -362,7 +530,34 @@ dom.refreshBtn.addEventListener('click', async () => {
 dom.barSelect.addEventListener('change', () => {
   state.selectedBar = dom.barSelect.value;
   state.hasRenderedData = false;
+  state.lastChartSignature = null;
   bootstrapRealtime();
+});
+
+dom.okxLoginBtn.addEventListener('click', () => {
+  if (state.auth.connected) return;
+  openAuthModal();
+});
+
+dom.okxLogoutBtn.addEventListener('click', async () => {
+  try {
+    await logoutAuth();
+  } catch (err) {
+    dom.authError.textContent = err.message;
+    openAuthModal();
+  }
+});
+
+dom.authCloseBtn.addEventListener('click', closeAuthModal);
+dom.authModal.addEventListener('click', (event) => {
+  if (event.target === dom.authModal) closeAuthModal();
+});
+dom.authSubmitBtn.addEventListener('click', async () => {
+  try {
+    await submitAuth();
+  } catch (err) {
+    dom.authError.textContent = err.message;
+  }
 });
 
 window.addEventListener('beforeunload', () => {

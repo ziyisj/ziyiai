@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from .cli import apply_preset_args, build_parser
 from .indicators import exponential_moving_average, relative_strength_index, simple_moving_average
 from .live import build_okx_live_dashboard_bundle
+from .okx_private import OKXAPIError, OKXAccountSession, OKXCredentials
 
 
 def get_runtime_root() -> Path:
@@ -68,6 +69,7 @@ class DashboardState:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.lock = threading.Lock()
+        self.account_session = OKXAccountSession()
 
     def _resolve_args(self, bar: str | None = None) -> argparse.Namespace:
         if not bar or bar == self.args.okx_bar:
@@ -80,11 +82,20 @@ class DashboardState:
         resolved_args = self._resolve_args(bar)
         with self.lock:
             candles, snapshot, realtime = build_okx_live_dashboard_bundle(resolved_args)
+        snapshot_dict = snapshot.to_dict()
+        account = self.account_session.fetch_account_snapshot(resolved_args.okx_inst_id)
+        if account.get("connected") and not account.get("error"):
+            snapshot_dict["cash"] = account.get("cash")
+            snapshot_dict["equity"] = account.get("equity")
+            snapshot_dict["current_position_state"] = account.get("current_position_state")
+            snapshot_dict["current_position_qty"] = account.get("current_position_qty")
+
         return {
-            "snapshot": snapshot.to_dict(),
+            "snapshot": snapshot_dict,
             "candles": _serialize_candles(candles),
             "indicators": _build_indicator_payload(candles),
             "realtime": realtime,
+            "account": account,
             "meta": {
                 "refresh_seconds": max(1, int(getattr(resolved_args, "dashboard_refresh_seconds", 1))),
                 "instrument": resolved_args.okx_inst_id,
@@ -93,6 +104,29 @@ class DashboardState:
                 "stream_url": f"/api/dashboard-stream?bar={resolved_args.okx_bar}",
             },
         }
+
+    def login_okx(self, payload: dict) -> dict:
+        credentials = OKXCredentials(
+            api_key=str(payload.get("api_key", "")).strip(),
+            api_secret=str(payload.get("api_secret", "")).strip(),
+            passphrase=str(payload.get("passphrase", "")).strip(),
+            simulated=bool(payload.get("simulated", False)),
+        )
+        if not credentials.api_key or not credentials.api_secret or not credentials.passphrase:
+            raise ValueError("api_key、api_secret、passphrase 不能为空")
+        self.account_session.set_credentials(credentials)
+        try:
+            return self.account_session.fetch_account_snapshot(self.args.okx_inst_id, force=True)
+        except Exception:
+            self.account_session.clear()
+            raise
+
+    def logout_okx(self) -> dict:
+        self.account_session.clear()
+        return self.account_session.get_status()
+
+    def auth_status(self) -> dict:
+        return self.account_session.get_status()
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -120,28 +154,39 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 previous_body = body
             time.sleep(0.5)
 
+    def _read_json_body(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        return json.loads(raw.decode("utf-8") or "{}")
+
+    def _write_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/okx-auth-status":
+            try:
+                self._write_json(self.state.auth_status())
+            except Exception as exc:
+                self._write_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
         if parsed.path == "/api/dashboard":
             try:
                 params = parse_qs(parsed.query)
                 bar = params.get("bar", [None])[0]
                 payload = self.state.fetch_payload(bar=bar)
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._write_json(payload)
             except Exception as exc:
-                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
-                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._write_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+
         if parsed.path == "/api/dashboard-stream":
             try:
                 params = parse_qs(parsed.query)
@@ -150,14 +195,32 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
             except Exception as exc:
-                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
-                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._write_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+
         return super().do_GET()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/okx-login":
+            try:
+                payload = self._read_json_body()
+                account = self.state.login_okx(payload)
+                self._write_json({"ok": True, "account": account, "auth": self.state.auth_status()})
+            except (ValueError, OKXAPIError) as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if parsed.path == "/api/okx-logout":
+            try:
+                self._write_json({"ok": True, "auth": self.state.logout_okx()})
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        self._write_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
 
 class ReusableHTTPServer(ThreadingHTTPServer):
