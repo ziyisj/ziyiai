@@ -24,7 +24,11 @@ from eth_backtester.download import (
     fetch_eth_ohlc_from_coingecko,
     fetch_eth_ohlcv_from_okx,
 )
-from eth_backtester.live import build_okx_live_signal_snapshot
+from eth_backtester.live import (
+    _aggregate_candles_to_bar,
+    _overlay_current_bar_from_1m,
+    build_okx_live_signal_snapshot,
+)
 from eth_backtester.dashboard_server import build_dashboard_args, create_dashboard_server, start_dashboard_server
 from eth_backtester.indicators import average_true_range
 from eth_backtester.intraday import aggregate_candles_by_hours, is_in_session
@@ -105,6 +109,27 @@ def test_aggregate_candles_by_hours_rolls_up_15m_data() -> None:
     assert aggregated[0].close == candles[3].close
     assert aggregated[0].high == max(candle.high for candle in candles[:4])
     assert aggregated[0].volume == sum(candle.volume for candle in candles[:4])
+
+
+def test_overlay_current_bar_from_1m_keeps_highs_in_sync() -> None:
+    one_minute = [
+        Candle(timestamp=datetime(2024, 1, 1, 0, 0), open=100, high=101, low=99, close=100.5, volume=1),
+        Candle(timestamp=datetime(2024, 1, 1, 0, 1), open=100.5, high=103, low=100, close=102, volume=1),
+        Candle(timestamp=datetime(2024, 1, 1, 0, 2), open=102, high=102.5, low=101, close=101.5, volume=1),
+        Candle(timestamp=datetime(2024, 1, 1, 0, 3), open=101.5, high=104, low=101.2, close=103.5, volume=1),
+    ]
+    fifteen_minute = [
+        Candle(timestamp=datetime(2024, 1, 1, 0, 0), open=100, high=101.5, low=99, close=100.5, volume=10),
+    ]
+
+    aggregated = _aggregate_candles_to_bar(one_minute, "15m")
+    assert aggregated[-1].high == 104
+
+    overlaid = _overlay_current_bar_from_1m(fifteen_minute, one_minute, "15m", candles_limit=300)
+    assert overlaid[-1].timestamp == datetime(2024, 1, 1, 0, 0)
+    assert overlaid[-1].high == 104
+    assert overlaid[-1].low == 99
+    assert overlaid[-1].close == 103.5
 
 
 def test_moving_average_strategy_produces_buy_and_sell_signals() -> None:

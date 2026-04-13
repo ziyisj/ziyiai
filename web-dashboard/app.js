@@ -58,9 +58,20 @@ const chartTheme = {
     textColor: '#d7dde7',
     fontFamily: 'Inter, Microsoft YaHei UI, sans-serif'
   },
+  localization: {
+    locale: 'zh-CN',
+    timeFormatter: (time) => formatChartTime(time, true),
+  },
   grid: { vertLines: { color: '#1a2437' }, horzLines: { color: '#1a2437' } },
   rightPriceScale: { borderColor: '#24324a' },
-  timeScale: { borderColor: '#24324a', timeVisible: true, secondsVisible: false },
+  timeScale: {
+    borderColor: '#24324a',
+    timeVisible: true,
+    secondsVisible: false,
+    shiftVisibleRangeOnNewBar: true,
+    rightOffset: 6,
+    tickMarkFormatter: (time) => formatChartTime(time, false),
+  },
   crosshair: {
     mode: LightweightCharts.CrosshairMode.Normal,
     vertLine: { color: '#6b7b93', style: LightweightCharts.LineStyle.Dashed },
@@ -97,6 +108,24 @@ function formatBeijingTime(iso) {
 function toUnixSeconds(iso) {
   const date = parseIsoAsUtc(iso);
   return Math.floor(date.getTime() / 1000);
+}
+
+function chartTimeToDate(time) {
+  if (typeof time === 'number') return new Date(time * 1000);
+  if (time && typeof time === 'object' && 'timestamp' in time) return new Date(time.timestamp * 1000);
+  if (time && typeof time === 'object' && 'year' in time && 'month' in time && 'day' in time) {
+    return new Date(Date.UTC(time.year, time.month - 1, time.day));
+  }
+  return null;
+}
+
+function formatChartTime(time, withDate = false) {
+  const date = chartTimeToDate(time);
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const options = withDate
+    ? { timeZone: SHANGHAI_TIME_ZONE, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+    : { timeZone: SHANGHAI_TIME_ZONE, hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+  return new Intl.DateTimeFormat('zh-CN', options).format(date).replaceAll('/', '-');
 }
 
 function mapRecommendation(value) {
@@ -323,12 +352,18 @@ function applyIncrementalChartUpdate(payload) {
 
 function recordRenderedChartState(payload) {
   const candles = payload.candles || [];
+  const previousCount = state.lastCandleCount;
   state.hasRenderedData = true;
   state.lastRenderedBar = state.selectedBar;
   state.lastChartSignature = buildChartSignature(payload);
   state.lastCandleCount = candles.length;
   state.lastCandleTime = candles.length ? candles[candles.length - 1].time : null;
   dom.chartRange.textContent = candles.length ? `${formatBeijingTime(candles[0].time)} -> ${formatBeijingTime(candles[candles.length - 1].time)}` : '等待数据';
+  if (previousCount && candles.length > previousCount && Date.now() >= state.interactingUntil) {
+    state.priceChartObj.timeScale().scrollToRealTime();
+    state.rsiChartObj.timeScale().scrollToRealTime();
+    state.macdChartObj.timeScale().scrollToRealTime();
+  }
 }
 
 function renderCharts(payload) {

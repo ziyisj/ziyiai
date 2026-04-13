@@ -15,6 +15,17 @@ _FEEDS: dict[tuple[str, str, int], OKXPublicRealtimeFeed] = {}
 _FEEDS_LOCK = threading.Lock()
 
 
+def _bar_multiplier(bar: str) -> int:
+    value = bar.strip()
+    if value.endswith("m"):
+        return int(value[:-1])
+    if value.endswith("H"):
+        return int(value[:-1]) * 60
+    if value.endswith("D"):
+        return int(value[:-1]) * 1440
+    raise ValueError(f"Unsupported bar interval: {bar}")
+
+
 def _build_backtest_config(args: Namespace) -> BacktestConfig:
     return BacktestConfig(
         initial_cash=args.initial_cash,
@@ -49,6 +60,66 @@ def _bar_timedelta(bar: str) -> timedelta:
     if value.endswith("D"):
         return timedelta(days=int(value[:-1]))
     raise ValueError(f"Unsupported bar interval: {bar}")
+
+
+def _bucket_start(timestamp: datetime, bar: str) -> datetime:
+    delta = _bar_timedelta(bar)
+    epoch = datetime(1970, 1, 1)
+    total_seconds = int((timestamp - epoch).total_seconds())
+    bucket_seconds = int(delta.total_seconds())
+    bucket_floor = total_seconds - (total_seconds % bucket_seconds)
+    return epoch + timedelta(seconds=bucket_floor)
+
+
+def _aggregate_candles_to_bar(candles: list[Candle], bar: str) -> list[Candle]:
+    if not candles:
+        return []
+    aggregated: list[Candle] = []
+    current: Candle | None = None
+    current_bucket: datetime | None = None
+    for candle in sorted(candles, key=lambda item: item.timestamp):
+        bucket = _bucket_start(candle.timestamp, bar)
+        if current is None or bucket != current_bucket:
+            if current is not None:
+                aggregated.append(current)
+            current_bucket = bucket
+            current = Candle(
+                timestamp=bucket,
+                open=candle.open,
+                high=candle.high,
+                low=candle.low,
+                close=candle.close,
+                volume=candle.volume,
+            )
+            continue
+        current = Candle(
+            timestamp=current.timestamp,
+            open=current.open,
+            high=max(current.high, candle.high),
+            low=min(current.low, candle.low),
+            close=candle.close,
+            volume=current.volume + candle.volume,
+        )
+    if current is not None:
+        aggregated.append(current)
+    return aggregated
+
+
+def _overlay_current_bar_from_1m(candles: list[Candle], one_minute_candles: list[Candle], bar: str, candles_limit: int) -> list[Candle]:
+    if not candles or not one_minute_candles or bar == "1m":
+        return candles
+    aggregated = _aggregate_candles_to_bar(one_minute_candles, bar)
+    if not aggregated:
+        return candles
+
+    result = list(candles)
+    latest = aggregated[-1]
+    if result and latest.timestamp == result[-1].timestamp:
+        result[-1] = latest
+    elif result and latest.timestamp > result[-1].timestamp:
+        result.append(latest)
+        result = result[-candles_limit:]
+    return result
 
 
 def _tick_synced_candles(candles: list[Candle], latest_price: float | None, latest_price_ts: str | None, bar: str) -> list[Candle]:
@@ -94,6 +165,16 @@ def get_okx_realtime_feed(args: Namespace) -> OKXPublicRealtimeFeed:
         return feed
 
 
+def _get_feed(inst_id: str, bar: str, candles_limit: int) -> OKXPublicRealtimeFeed:
+    key = (inst_id, bar, candles_limit)
+    with _FEEDS_LOCK:
+        feed = _FEEDS.get(key)
+        if feed is None:
+            feed = OKXPublicRealtimeFeed(inst_id=inst_id, bar=bar, candles_limit=candles_limit)
+            _FEEDS[key] = feed
+        return feed
+
+
 def build_okx_live_dashboard_bundle(args: Namespace) -> tuple[list[Candle], SignalSnapshot, dict]:
     feed = get_okx_realtime_feed(args)
     market_state = feed.snapshot()
@@ -112,7 +193,13 @@ def build_okx_live_dashboard_bundle(args: Namespace) -> tuple[list[Candle], Sign
         }
     latest_price = market_state.get("latest_price")
     latest_price_ts = market_state.get("latest_price_ts")
-    chart_candles = _tick_synced_candles(candles, latest_price, latest_price_ts, args.okx_bar)
+    chart_candles = candles
+    if args.okx_bar != "1m":
+        one_minute_limit = max(args.okx_candles * _bar_multiplier(args.okx_bar), 120)
+        one_minute_feed = _get_feed(args.okx_inst_id, "1m", one_minute_limit)
+        one_minute_state = one_minute_feed.snapshot()
+        chart_candles = _overlay_current_bar_from_1m(candles, one_minute_state.get("candles") or [], args.okx_bar, args.okx_candles)
+    chart_candles = _tick_synced_candles(chart_candles, latest_price, latest_price_ts, args.okx_bar)
     snapshot = _build_snapshot_from_candles(args, chart_candles)
     realtime = {
         "latest_price": chart_candles[-1].close if latest_price is None else latest_price,
